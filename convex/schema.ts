@@ -65,4 +65,45 @@ export default defineSchema({
   })
     .index("by_bullet_point", ["bulletPointId"])
     .index("by_bullet_point_position", ["bulletPointId", "position"]),
+
+  dynamicFiles: defineTable({
+    resumeId: v.id("resumes"),
+    title: v.string(),
+    icon: v.optional(v.string()),
+    isPublic: v.boolean(),
+    position: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_resume", ["resumeId"])
+    .index("by_resume_position", ["resumeId", "position"]),
+
+  dynamicFileContent: defineTable({
+    fileId: v.id("dynamicFiles"),
+    content: v.optional(v.any()), // BlockNote content as JSON
+    version: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_file", ["fileId"]),
+
+  fileTemplates: defineTable({
+    name: v.string(),
+    description: v.string(),
+    icon: v.string(),
+    initialContent: v.optional(v.any()), // BlockNote initial content
+    category: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_category", ["category"]),
+
+  fileUploads: defineTable({
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    fileType: v.string(),
+    fileSize: v.number(),
+    dynamicFileId: v.id("dynamicFiles"),
+    uploadedAt: v.number(),
+  })
+    .index("by_dynamic_file", ["dynamicFileId"]),
 });

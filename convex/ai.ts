@@ -26,6 +26,42 @@ export const chatWithResume = action({
         throw new Error("Resume not found");
       }
 
+      // Fetch GitHub data if GitHub URL is provided
+      let githubData = null;
+      let githubUsername = null;
+      
+      if (resume.github) {
+        // Extract username from GitHub URL (e.g., "github.com/username" or just "username")
+        const githubUrlMatch = resume.github.match(/(?:github\.com\/)?([a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38})\/?$/);
+        if (githubUrlMatch) {
+          githubUsername = githubUrlMatch[1];
+          console.log('📎 Extracted GitHub username from URL:', githubUsername, 'from', resume.github);
+        }
+      }
+      
+      console.log('🔍 Checking for GitHub username:', githubUsername);
+      if (githubUsername) {
+        console.log('📡 Fetching GitHub data for:', githubUsername);
+        const githubResponse = await ctx.runAction(api.github.fetchGithubData, { 
+          username: githubUsername 
+        });
+        console.log('📦 GitHub response:', {
+          success: githubResponse.success,
+          hasData: !!githubResponse.data,
+          error: githubResponse.error
+        });
+        if (githubResponse.success && githubResponse.data) {
+          githubData = githubResponse.data;
+          console.log('✅ GitHub data loaded:', {
+            repos: githubData.statistics.totalRepositories,
+            stars: githubData.statistics.totalStars,
+            languages: githubData.statistics.topLanguages
+          });
+        }
+      } else {
+        console.log('❌ No GitHub username extracted from:', resume.github);
+      }
+
       // Get all projects first
       const projects = await ctx.runQuery(api.projects.list, { resumeId: args.resumeId });
       
@@ -110,12 +146,40 @@ export const chatWithResume = action({
         })
       };
 
+      // Format GitHub data for context if available
+      const githubContext = githubData ? `
+
+GitHub Profile (@${githubData.profile.username}):
+${githubData.profile.bio ? `Bio: ${githubData.profile.bio}` : ''}
+Followers: ${githubData.profile.followers} | Public Repos: ${githubData.statistics.totalRepositories}
+Total Stars: ${githubData.statistics.totalStars} | Total Forks: ${githubData.statistics.totalForks}
+
+Top Languages: ${githubData.statistics.topLanguages.slice(0, 5).map((lang: any) => `${lang.language} (${lang.count})`).join(', ')}
+
+GitHub Repositories (${githubData.repositories.length} public repos):
+${githubData.repositories.map((repo: any, index: number) => `
+${index + 1}. ${repo.name}${repo.stars > 0 ? ` (⭐ ${repo.stars})` : ''} - ${repo.description || 'No description'}
+   URL: ${repo.url}
+   ${repo.language ? `Language: ${repo.language}` : ''}${repo.topics && repo.topics.length > 0 ? ` | Topics: ${repo.topics.slice(0, 3).join(', ')}` : ''}`).join('\n')}
+
+IMPORTANT: When asked about specific GitHub projects, code quality, or implementation details, the Google Search grounding will automatically search these repository URLs to provide accurate, real-time information.` : '';
+      
+      console.log('📄 GitHub context included:', githubContext ? 'YES' : 'NO');
+      if (githubContext) {
+        console.log('GitHub context preview:', githubContext.substring(0, 300) + '...');
+      }
+
       // Format resume data for context with simple IDs
       const resumeContext = `
 Resume Owner: ${resume.name || resumeData.title}
 ${resume.role ? `Role: ${resume.role}` : ''}
 Resume Title: ${resumeData.title}
 ${resumeData.description ? `Description: ${resumeData.description}` : ''}
+${resume.portfolio ? `
+PORTFOLIO WEBSITE (MUST SEARCH): ${resume.portfolio}
+**IMPORTANT**: This portfolio contains additional projects and details not listed below. Search it when answering about specific technologies or project types.
+` : ''}
+${githubContext}
 
 Projects:
 ${resumeData.projects.map((project, pIndex) => `
@@ -130,16 +194,22 @@ ${resumeData.projects.map((project, pIndex) => `
       ${bp.branches.map((branch: any) => `
         - ${branch.content} (ID: ${branch.simpleId})`).join('\n')}` : ''}`).join('\n')}`).join('\n')}`;
 
-      // Initialize Gemini with 2.5 Flash
+      // Initialize Gemini with 2.5 Flash and Google Search grounding
       const genAI = new GoogleGenerativeAI(apiKey);
+      
+      // Enable Google Search grounding for real-time information
+      // Using type assertion workaround for googleSearch field (SDK types not updated yet)
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.5-flash",
+        model: "gemini-2.5-flash-preview-05-20",  // Using preview version that supports grounding
         generationConfig: {
-          temperature: 0.3,  // Lower temperature for more focused, concise responses
+          temperature: 1.2,  // Higher temperature for more thorough searching
           maxOutputTokens: 8192,
-          topK: 40,
+          topK: 64,  // Increased for broader search
           topP: 0.95,
-        }
+        },
+        tools: [{
+          googleSearch: {}  // Simple search configuration
+        } as any],  // Type assertion workaround until SDK updates
       });
 
       // Build conversation context
@@ -150,48 +220,126 @@ ${resumeData.projects.map((project, pIndex) => `
         : '';
 
       // Create the prompt
-      const prompt = `ROLE
-      You are **Aurea**, an AI assistant reviewing a resume. You are NOT the resume owner.
+      const prompt = `ROLE & VOICE
+      You are **Aurea**—a decisive, professional resume analyst. Give clear opinions and a structured answer. No small talk, no hedging, no "Let me…", no "As an AI…".
       
-      REFERENTS
-      Call the candidate "${resume.name || 'the candidate'}"; use they/them. Never say "I" for their experience.
+      IDENTITY
+      You are not the candidate. Refer to them as "${resume.name || 'the candidate'}" and use they/them. Never use "I" to describe their experience.
       
+      INPUTS
       DATA
       ${resumeContext}
       
-      ${conversationContext ? `HISTORY\n${conversationContext}\n` : ''}QUESTION
+      ${conversationContext ? `HISTORY
+      ${conversationContext}
+      ` : ''}QUESTION
       ${args.message}
       
-      OBJECTIVE
-      Answer the question using the DATA (and HISTORY if present). Be correct, brief, and helpful.
+      CRITICAL SEARCH REQUIREMENTS (MUST EXECUTE)
+      • **ABSOLUTELY MANDATORY FOR EVERY QUESTION**: 
+        1. ALWAYS search "${resume.portfolio ? resume.portfolio : 'portfolio'}" first
+        2. When asked "Do they have any project in portfolio?" - YOU MUST SEARCH THE PORTFOLIO
+        3. For ANY technology/skill question (AI, financial, mobile, etc.) - search "${resume.portfolio ? resume.portfolio : 'portfolio'} [keyword]"
+        4. Search multiple times with different keywords if needed
+      • **PORTFOLIO CONTAINS ADDITIONAL PROJECTS NOT IN RESUME DATA**:
+        - Financial apps, AI projects, and other work NOT listed below
+        - You MUST search portfolio to discover these projects
+        - Never answer based only on resume data when portfolio exists
+      • **SEARCH PATTERNS TO USE**:
+        - "${resume.portfolio ? resume.portfolio : 'portfolio'} financial"
+        - "${resume.portfolio ? resume.portfolio : 'portfolio'} AI"
+        - "site:${resume.portfolio ? resume.portfolio.replace('https://', '').replace('http://', '') : 'domain'} [keyword]"
+      • Portfolio URL: ${resume.portfolio ? resume.portfolio : 'Not provided'}
+      • NEVER rely only on resume projects below - ALWAYS search portfolio first
       
-      RULES
-      1) Use HISTORY to resolve pronouns/ellipsis ("so no?", "that one?", etc.).
-      2) Start with **Yes/No** when applicable, then 1–2 short sentences of support.
-      3) Cite only *specific* achievements from bullets/branches; never cite title/description.
-         • Format inline after the sentence: [Bullet:"text"]{B1} or [Branch:"text"]{BR1}; project names inline as [Project:"Title"]{P1}.
-         • Use the simple IDs provided (P1, B1, BR1 format), NOT long alphanumeric strings.
-      4) Keep under **500 words**. Prefer 5-6 sentences per paragraph; blank line between topics.
-      5) Avoid walls of text, exhaustive lists, and nested bullets. Use at most 3–5 simple bullets when useful.
-      6) Summarize; group similar items; offer to expand on request.
-      7) Tone: concise, professional, conversational. End with a helpful question when appropriate.
+      OUTPUT FORMAT (always follow)
+      1) **Topline** — Direct answer in 1–2 sentences.
+      2) **Evidence** — 2–3 bullets max with inline citations. Use • for bullets, NOT * asterisks.
+      3) **Risk/Gap** — 0–1 bullet if relevant. Use • for bullets.
+      4) **Next step** — Give your opinion on the question.
+      End with: "Want details on X?"
       
-      PATTERNS
-      • Summary (good): "${resume.name || 'The candidate'} led real-time fraud detection and built an ML pipeline [Bullet:"Built end-to-end ML pipeline"]{B1}, reaching 99.2% precision [Bullet:"Trained ensemble model"]{B2}."
-      • Tech breadth (good): "Strong full-stack experience (Python, Java, TypeScript) and cloud-native tools (Docker, Kubernetes, Kafka)."
+      STYLE & LIMITS
+      • ≤180 words. Skimmable. No nested bullets. Max 5 bullets total.
+      • ALWAYS use • (bullet point character) for lists, NEVER use * (asterisk)
+      • Prefer numbers/impact where available. Group similar items.
+      • Be confident and specific; avoid hedging language ("maybe," "might").
       
-      TASK-SPECIFIC TIPS
-      • "What are the branches?": Don’t list all. Say: "Branches cover X, Y, Z—which project should I open?"
-      • "Tell me about the experience": Give a 2–3 sentence overview + 1–2 key highlights with citations.
-      • "What projects are there?": List project names with 5–10 word descriptors; no bullets/branches by default.
+      CITATIONS (strict)
+      • Cite only concrete achievements/details; never cite title/description.
+      • Use simple IDs from DATA:
+        – Projects: [Project:"Title"]{P#}
+        – Bullets:  [Bullet:"text"]{B#}
+        – Branches: [Branch:"text"]{BR#}
+      • External (REQUIRED when found via search):
+        – Portfolio main: [Portfolio:"Portfolio website"]{portfolio}
+        – Portfolio project: [Portfolio:"ProjectName"]{portfolio}
+        – GitHub profile: [GitHub:"GitHub profile"]{github}
+        – GitHub repo:    [GitHub:"repo-name"]{github:repo-name}
+      • **ALWAYS cite portfolio when you find information there through search**
+      • One citation per claim. Place immediately after the sentence.
       
-      OUTPUT
-      Short, skimmable paragraphs or a brief list (no sub-bullets). Offer deeper detail on request.`;
+      TASK TEMPLATES
+      • Yes/No: Start with **Yes**/**No**, then one sentence why, then 1–2 Evidence bullets with citations.
+      • "What projects?": List names + 5–10 word descriptors only (no bullets/branches).
+      • "Branches?": Summarize 2–3 themes and ask which project to open.
+      • "Do they have X in portfolio?": MUST search portfolio website first, then cite findings with [Portfolio:"ProjectName"]{portfolio}
+      
+      QUALITY BAR
+      • No enumerating every skill. Choose the 2–3 strongest proofs.
+      • If data conflicts, privilege resume bullets/branches; note conflict in Risk/Gap with a citation.
+      
+      Now answer using the format above.`;
+      
 
-      // Generate response
+      // Generate response with grounding
       const result = await model.generateContent(prompt);
       const response = result.response;
-      const text = response.text();
+      let text = response.text();
+      
+      // Check if response includes grounding metadata
+      const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
+      if (groundingMetadata) {
+        console.log('🌐 Response grounded with web search:', {
+          queries: groundingMetadata.webSearchQueries,
+          sourcesCount: groundingMetadata.groundingChunks?.length || 0
+        });
+        
+        // Add inline citations if grounding data is available
+        if (groundingMetadata.groundingSupports && groundingMetadata.groundingChunks) {
+          // Sort supports by end index in descending order
+          const sortedSupports = [...groundingMetadata.groundingSupports].sort(
+            (a: any, b: any) => {
+              const aEndIndex = a.segment?.endIndex ?? 0;
+              const bEndIndex = b.segment?.endIndex ?? 0;
+              return bEndIndex - aEndIndex;
+            }
+          );
+          
+          for (const support of sortedSupports) {
+            const segment = support.segment as any;
+            const endIndex = segment?.endIndex;
+            const chunkIndices = (support as any).groundingChunkIndices || (support as any).groundingChunckIndices;
+            
+            if (endIndex === undefined || !chunkIndices?.length) {
+              continue;
+            }
+            
+            // Add GitHub citation for GitHub URLs
+            const chunks = groundingMetadata.groundingChunks;
+            const isGitHubSource = chunkIndices.some((i: number) => {
+              if (!chunks || !chunks[i]) return false;
+              const uri = chunks[i]?.web?.uri;
+              return uri && uri.includes('github.com');
+            });
+            
+            if (isGitHubSource) {
+              // Add GitHub citation marker
+              text = text.slice(0, endIndex) + ' [GitHub:"Source"]{github}' + text.slice(endIndex);
+            }
+          }
+        }
+      }
 
       // Parse response to extract referenced IDs and map them back
       const parseResponse = (responseText: string) => {

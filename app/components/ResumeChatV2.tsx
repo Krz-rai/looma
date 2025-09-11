@@ -15,7 +15,8 @@ import {
   ArrowDown,
   FolderOpen,
   Circle,
-  GitBranch
+  GitBranch,
+  Globe
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
@@ -71,10 +72,14 @@ function MessageContent({ content, onCitationClick, idMapping }: {
   let bulletCounter = 0;
   let branchCounter = 0;
   let projectCounter = 0;
+  let githubCounter = 0;
+  let portfolioCounter = 0;
   
-  // Find all citations
-  const citationRegex = /\[(Project|Bullet|Branch):\s*"([^"]+?)(?:\.\.\.)?"\]\s*\{([^}]*)\}/g;
+  // Find all citations (including GitHub and Portfolio)
+  const citationRegex = /\[(Project|Bullet|Branch|GitHub|Portfolio):\s*"([^"]+?)(?:\.\.\.)?"\]\s*\{([^}]*)\}/g;
   let match;
+  
+  console.log('📝 Processing content for citations:', content.substring(0, 200));
   
   while ((match = citationRegex.exec(content)) !== null) {
     // Add text before citation
@@ -85,13 +90,31 @@ function MessageContent({ content, onCitationClick, idMapping }: {
     const type = match[1].toLowerCase();
     const text = match[2];
     const simpleId = match[3];
-    const convexId = idMapping?.reverse?.[simpleId] || simpleId;
-    const id = convexId;
     
+    // For GitHub citations with repo names (format: github:reponame) and Portfolio citations, preserve the full ID
+    let id;
+    if ((type === 'github' && simpleId.startsWith('github:')) || 
+        (type === 'portfolio' && simpleId.startsWith('portfolio:'))) {
+      id = simpleId; // Keep the full format for specific references
+    } else {
+      const convexId = idMapping?.reverse?.[simpleId] || simpleId;
+      id = convexId;
+    }
+    
+    console.log('🎯 Citation found:', { type, text, simpleId, id });
     
     // Generate citation number
     let num;
-    if (type === 'project') {
+    let uniqueId = id;
+    if (type === 'github') {
+      githubCounter++;
+      num = 0; // GitHub citations don't show numbers
+      uniqueId = `github-${githubCounter}`; // Make each GitHub citation unique
+    } else if (type === 'portfolio') {
+      portfolioCounter++;
+      num = 0; // Portfolio citations don't show numbers
+      uniqueId = `portfolio-${portfolioCounter}`; // Make each Portfolio citation unique
+    } else if (type === 'project') {
       if (!projectMap.has(id)) {
         projectCounter++;
         projectMap.set(id, projectCounter);
@@ -114,7 +137,7 @@ function MessageContent({ content, onCitationClick, idMapping }: {
     // Add citation element
     parts.push(
       <Citation
-        key={`${type}-${id}`}
+        key={`${type}-${uniqueId}-${match.index}`}  // Use uniqueId to ensure uniqueness
         type={type}
         text={text}
         id={id}
@@ -173,14 +196,14 @@ function TextFragment({ text }: { text: string }) {
     );
   }
   
-  // No paragraph breaks - keep inline
-  const inlineText = text.replace(/\n/g, ' ');
-  const formatted = inlineText
+  // Handle single line breaks as <br/> for proper formatting
+  const formattedText = text
+    .replace(/\n/g, '<br/>')  // Keep line breaks for proper bullet formatting
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-muted/50 text-xs font-mono text-foreground/90">$1</code>');
   
-  return <span dangerouslySetInnerHTML={{ __html: formatted }} />;
+  return <span dangerouslySetInnerHTML={{ __html: formattedText }} />;
 }
 
 // Simple Citation Component
@@ -201,7 +224,18 @@ function Citation({ type, text, id, num, onClick }: {
   let icon;
   let label;
   
-  if (type === 'project') {
+  if (type === 'github') {
+    // GitHub icon SVG
+    icon = (
+      <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 24 24">
+        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+      </svg>
+    );
+    label = "GitHub";
+  } else if (type === 'portfolio') {
+    icon = <Globe className="h-3 w-3" />;
+    label = "Portfolio";
+  } else if (type === 'project') {
     icon = <FolderOpen className="h-3 w-3 opacity-50" />;
     label = text;
   } else if (type === 'bullet') {

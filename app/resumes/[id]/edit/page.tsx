@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { Authenticated, Unauthenticated, useQuery } from "convex/react";
 import { SignInButton } from "@clerk/nextjs";
 import { ResumeBuilder } from "../../../components/ResumeBuilder";
+import { FileSidebar } from "../../../components/FileSidebar";
+import { DynamicFileViewer } from "../../../components/DynamicFileViewer";
 import { Id } from "../../../../convex/_generated/dataModel";
 import { api } from "../../../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -27,6 +29,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { PDFExportButton } from "@/components/PDFExport";
 import { ProjectDataFetcher } from "@/components/DataFetcher";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 
 export default function EditResumePage() {
   const params = useParams();
@@ -34,6 +41,7 @@ export default function EditResumePage() {
   const resumeId = params.id as Id<"resumes">;
   const [saved, setSaved] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [selectedFileId, setSelectedFileId] = useState<Id<"dynamicFiles"> | null>(null);
   const [bulletPointsByProject, setBulletPointsByProject] = useState<{ [key: string]: {
     _id: Id<"bulletPoints">;
     projectId: Id<"projects">;
@@ -44,6 +52,7 @@ export default function EditResumePage() {
   
   const resume = useQuery(api.resumes.get, { id: resumeId });
   const projects = useQuery(api.projects.list, resume ? { resumeId } : "skip");
+  const dynamicFiles = useQuery(api.dynamicFiles.list, resume ? { resumeId } : "skip");
 
   const handleSave = () => {
     setSaved(true);
@@ -158,18 +167,42 @@ export default function EditResumePage() {
         }
       />
       
-      <main className="pt-20 p-8">
+      <main className="pt-12 h-[calc(100vh-3rem)]">
         <Authenticated>
-          {/* Data fetcher for PDF export */}
-          {projects && projects.map(project => (
-            <ProjectDataFetcher
-              key={project._id}
-              project={project}
-              onBulletPointsLoad={handleBulletPointsLoad}
-            />
-          ))}
-          
-          <ResumeBuilder resumeId={resumeId} />
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            {/* Left Sidebar - 25% */}
+            <ResizablePanel defaultSize={25} minSize={20} maxSize={35}>
+              <FileSidebar
+                resumeId={resumeId}
+                dynamicFiles={dynamicFiles || []}
+                selectedFileId={selectedFileId}
+                onSelectFile={setSelectedFileId}
+                isEditable={true}
+              />
+            </ResizablePanel>
+            
+            <ResizableHandle withHandle />
+            
+            {/* Main Content - 75% */}
+            <ResizablePanel defaultSize={75}>
+              <div className="h-full overflow-y-auto p-8">
+                {/* Data fetcher for PDF export */}
+                {projects && projects.map(project => (
+                  <ProjectDataFetcher
+                    key={project._id}
+                    project={project}
+                    onBulletPointsLoad={handleBulletPointsLoad}
+                  />
+                ))}
+                
+                {selectedFileId ? (
+                  <DynamicFileViewer fileId={selectedFileId} />
+                ) : (
+                  <ResumeBuilder resumeId={resumeId} />
+                )}
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         </Authenticated>
         <Unauthenticated>
           <div className="max-w-md mx-auto text-center space-y-4">

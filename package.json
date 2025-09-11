@@ -14,6 +14,9 @@
   },
   "dependencies": {
     "@ai-sdk/react": "^2.0.39",
+    "@blocknote/core": "^0.37.0",
+    "@blocknote/mantine": "^0.37.0",
+    "@blocknote/react": "^0.37.0",
     "@clerk/clerk-react": "^5.25.0",
     "@clerk/nextjs": "^6.12.6",
     "@dnd-kit/core": "^6.3.1",
