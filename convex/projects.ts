@@ -222,3 +222,97 @@ export const reorder = mutation({
     await ctx.db.patch(args.resumeId, { updatedAt: now });
   },
 });
+
+export const connectPage = mutation({
+  args: {
+    projectId: v.id("projects"),
+    pageId: v.optional(v.id("dynamicFiles")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+    
+    const project = await ctx.db.get(args.projectId);
+    if (!project) {
+      throw new Error("Project not found");
+    }
+    
+    const resume = await ctx.db.get(project.resumeId);
+    if (!resume) {
+      throw new Error("Resume not found");
+    }
+    
+    if (resume.userId !== identity.subject) {
+      throw new Error("Not authorized");
+    }
+    
+    // Verify the page exists and belongs to the same resume if pageId is provided
+    if (args.pageId) {
+      const page = await ctx.db.get(args.pageId);
+      if (!page) {
+        throw new Error("Page not found");
+      }
+      if (page.resumeId !== project.resumeId) {
+        throw new Error("Page does not belong to the same resume");
+      }
+    }
+    
+    await ctx.db.patch(args.projectId, {
+      connectedPageId: args.pageId || undefined,
+      updatedAt: Date.now(),
+    });
+    
+    await ctx.db.patch(project.resumeId, { updatedAt: Date.now() });
+    
+    return args.projectId;
+  },
+});
+
+export const getConnectedPageContent = query({
+  args: {
+    projectId: v.id("projects"),
+  },
+  handler: async (ctx, args) => {
+    console.log("📄 Fetching connected page content for project:", args.projectId);
+    
+    const project = await ctx.db.get(args.projectId);
+    if (!project) {
+      console.log("❌ Project not found:", args.projectId);
+      return null;
+    }
+    
+    if (!project.connectedPageId) {
+      console.log("ℹ️ No connected page for project:", project.title);
+      return null;
+    }
+    
+    console.log("🔍 Fetching page:", project.connectedPageId);
+    const page = await ctx.db.get(project.connectedPageId);
+    if (!page) {
+      console.log("❌ Connected page not found:", project.connectedPageId);
+      return null;
+    }
+    
+    console.log("📝 Fetching page content for:", page.title);
+    const pageContent = await ctx.db
+      .query("dynamicFileContent")
+      .withIndex("by_file", (q) => q.eq("fileId", project.connectedPageId!))
+      .first();
+    
+    console.log("✅ Successfully fetched page content:", {
+      pageTitle: page.title,
+      hasContent: !!pageContent?.content,
+      contentSize: pageContent?.content ? JSON.stringify(pageContent.content).length : 0
+    });
+    
+    return {
+      pageId: page._id,
+      pageTitle: page.title,
+      content: pageContent?.content || null,
+      projectTitle: project.title,
+      projectId: project._id,
+    };
+  },
+});

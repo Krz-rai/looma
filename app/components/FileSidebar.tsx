@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,6 @@ import {
   Globe,
   Trash2,
   Edit2,
-  ChevronRight,
   Briefcase,
   Award,
   Users,
@@ -40,25 +39,8 @@ import {
   Calendar,
   File,
   BarChart,
-  GripVertical,
+  FileUser,
 } from "lucide-react";
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 
 const iconMap: { [key: string]: React.ElementType } = {
   FileText,
@@ -78,120 +60,11 @@ interface FileSidebarProps {
     title: string;
     icon?: string;
     isPublic: boolean;
+    position: number;
   }>;
   selectedFileId: Id<"dynamicFiles"> | null;
   onSelectFile: (fileId: Id<"dynamicFiles"> | null) => void;
   isEditable?: boolean;
-}
-
-interface SortableFileItemProps {
-  file: {
-    _id: Id<"dynamicFiles">;
-    title: string;
-    icon?: string;
-    isPublic: boolean;
-  };
-  isSelected: boolean;
-  onSelect: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  onTogglePublic: () => void;
-  isEditable: boolean;
-}
-
-function SortableFileItem({ 
-  file, 
-  isSelected, 
-  onSelect, 
-  onEdit, 
-  onDelete,
-  onTogglePublic,
-  isEditable 
-}: SortableFileItemProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: file._id });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-
-  const Icon = file.icon ? (iconMap[file.icon] || FileText) : FileText;
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        "group flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors",
-        isSelected 
-          ? "bg-muted text-foreground" 
-          : "hover:bg-muted/50 text-muted-foreground hover:text-foreground"
-      )}
-    >
-      {isEditable && (
-        <div {...attributes} {...listeners} className="cursor-grab">
-          <GripVertical className="h-3.5 w-3.5 opacity-0 group-hover:opacity-50" />
-        </div>
-      )}
-      <div className="flex items-center gap-2 flex-1" onClick={onSelect}>
-        <Icon className="h-4 w-4 shrink-0" />
-        <span className="text-sm truncate flex-1">{file.title}</span>
-        {file.isPublic ? (
-          <Globe className="h-3 w-3 text-muted-foreground" />
-        ) : (
-          <Lock className="h-3 w-3 text-muted-foreground" />
-        )}
-      </div>
-      {isEditable && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
-            >
-              <MoreVertical className="h-3.5 w-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-40">
-            <DropdownMenuItem onClick={onEdit}>
-              <Edit2 className="mr-2 h-3.5 w-3.5" />
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onTogglePublic}>
-              {file.isPublic ? (
-                <>
-                  <Lock className="mr-2 h-3.5 w-3.5" />
-                  Make Private
-                </>
-              ) : (
-                <>
-                  <Globe className="mr-2 h-3.5 w-3.5" />
-                  Make Public
-                </>
-              )}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem 
-              onClick={onDelete}
-              className="text-destructive focus:text-destructive"
-            >
-              <Trash2 className="mr-2 h-3.5 w-3.5" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-    </div>
-  );
 }
 
 export function FileSidebar({ 
@@ -201,241 +74,304 @@ export function FileSidebar({
   onSelectFile,
   isEditable = false 
 }: FileSidebarProps) {
-  const [isAddingFile, setIsAddingFile] = useState(false);
-  const [newFileName, setNewFileName] = useState("");
-  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
-  const [editingFile, setEditingFile] = useState<{
-    _id: Id<"dynamicFiles">;
-    title: string;
-  } | null>(null);
-  
-  const templates = useQuery(api.fileTemplates.list);
+  const [showNewFileDialog, setShowNewFileDialog] = useState(false);
+  const [newFileTitle, setNewFileTitle] = useState("");
+  const [newFileIcon, setNewFileIcon] = useState("FileText");
+  const [editingFile, setEditingFile] = useState<Id<"dynamicFiles"> | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editIcon, setEditIcon] = useState("FileText");
+
   const createFile = useMutation(api.dynamicFiles.create);
   const updateFile = useMutation(api.dynamicFiles.update);
   const deleteFile = useMutation(api.dynamicFiles.remove);
-  const reorderFiles = useMutation(api.dynamicFiles.reorder);
-  const seedTemplates = useMutation(api.fileTemplates.seed);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
-
-  React.useEffect(() => {
-    if (templates && templates.length === 0) {
-      seedTemplates();
-    }
-  }, [templates, seedTemplates]);
-
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event;
-
-    if (active.id !== over?.id) {
-      const oldIndex = dynamicFiles.findIndex((f) => f._id === active.id);
-      const newIndex = dynamicFiles.findIndex((f) => f._id === over?.id);
-      
-      const newOrder = arrayMove(dynamicFiles, oldIndex, newIndex);
-      const fileIds = newOrder.map(f => f._id);
-      
-      await reorderFiles({ resumeId, fileIds });
-    }
-  };
 
   const handleCreateFile = async () => {
-    if (!newFileName.trim()) return;
-    
-    const templateId = selectedTemplate ? 
-      templates?.find(t => t.name === selectedTemplate)?._id : 
-      undefined;
-    
-    const fileId = await createFile({
-      resumeId,
-      title: newFileName,
-      icon: templates?.find(t => t._id === templateId)?.icon || "File",
-      isPublic: false,
-      templateId,
-    });
-    
-    setNewFileName("");
-    setSelectedTemplate(null);
-    setIsAddingFile(false);
-    onSelectFile(fileId);
+    if (newFileTitle.trim()) {
+      const fileId = await createFile({
+        resumeId,
+        title: newFileTitle.trim(),
+        icon: newFileIcon,
+        isPublic: false,
+      });
+      setNewFileTitle("");
+      setNewFileIcon("FileText");
+      setShowNewFileDialog(false);
+      onSelectFile(fileId);
+    }
   };
 
-  const handleUpdateFile = async () => {
-    if (!editingFile || !editingFile.title.trim()) return;
-    
-    await updateFile({
-      id: editingFile._id,
-      title: editingFile.title,
-    });
-    
-    setEditingFile(null);
-  };
-
-  const handleTogglePublic = async (file: {
-    _id: Id<"dynamicFiles">;
-    isPublic: boolean;
-  }) => {
-    await updateFile({
-      id: file._id,
-      isPublic: !file.isPublic,
-    });
+  const handleUpdateFile = async (fileId: Id<"dynamicFiles">) => {
+    if (editTitle.trim()) {
+      await updateFile({
+        id: fileId,
+        title: editTitle.trim(),
+        icon: editIcon,
+      });
+      setEditingFile(null);
+    }
   };
 
   const handleDeleteFile = async (fileId: Id<"dynamicFiles">) => {
-    await deleteFile({ id: fileId });
-    if (selectedFileId === fileId) {
-      onSelectFile(null);
+    if (confirm("Are you sure you want to delete this page?")) {
+      await deleteFile({ id: fileId });
+      if (selectedFileId === fileId) {
+        onSelectFile(null);
+      }
     }
   };
 
-  return (
-    <div className="h-full flex flex-col bg-muted/30 border-r border-border/40">
-      <div className="p-4 border-b border-border/40">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-medium">Files</h3>
-          {isEditable && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsAddingFile(true)}
-              className="h-7 px-2"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-          )}
-        </div>
-        
-        {/* Resume File (Always Present) */}
-        <div
-          onClick={() => onSelectFile(null)}
-          className={cn(
-            "flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors mb-2",
-            !selectedFileId 
-              ? "bg-muted text-foreground" 
-              : "hover:bg-muted/50 text-muted-foreground hover:text-foreground"
-          )}
-        >
-          <FileText className="h-4 w-4" />
-          <span className="text-sm font-medium">Resume</span>
-          <ChevronRight className="h-3 w-3 ml-auto" />
-        </div>
-      </div>
+  const handleTogglePublic = async (fileId: Id<"dynamicFiles">, currentIsPublic: boolean) => {
+    await updateFile({
+      id: fileId,
+      isPublic: !currentIsPublic,
+    });
+  };
 
-      <ScrollArea className="flex-1 p-4">
-        <div className="space-y-1">
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
+  const sortedFiles = [...(dynamicFiles || [])].sort((a, b) => a.position - b.position);
+
+  return (
+    <div className="h-full flex flex-col bg-sidebar border-r">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b">
+        <h3 className="text-sm font-semibold">Pages</h3>
+        {isEditable && (
+          <Button
+            onClick={() => setShowNewFileDialog(true)}
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0"
           >
-            <SortableContext
-              items={dynamicFiles.map(f => f._id)}
-              strategy={verticalListSortingStrategy}
-            >
-              {dynamicFiles.map((file) => (
-                <SortableFileItem
-                  key={file._id}
-                  file={file}
-                  isSelected={selectedFileId === file._id}
-                  onSelect={() => onSelectFile(file._id)}
-                  onEdit={() => setEditingFile(file)}
-                  onDelete={() => handleDeleteFile(file._id)}
-                  onTogglePublic={() => handleTogglePublic(file)}
-                  isEditable={isEditable}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
+            <Plus className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+      
+      {/* File List */}
+      <ScrollArea className="flex-1">
+        <div className="p-2 space-y-1">
+          {/* Resume Option */}
+          <div
+            className={cn(
+              "group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors",
+              selectedFileId === null
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "hover:bg-sidebar-accent/50 text-sidebar-foreground"
+            )}
+            onClick={() => onSelectFile(null)}
+          >
+            <FileUser className="h-4 w-4 shrink-0" />
+            <span className="text-sm font-medium">Resume</span>
+          </div>
+          
+          {/* Separator if there are files */}
+          {sortedFiles.length > 0 && (
+            <div className="my-2 border-b border-sidebar-border/50" />
+          )}
+          
+          {sortedFiles.map((file) => {
+            const Icon = file.icon ? (iconMap[file.icon] || FileText) : FileText;
+            const isSelected = selectedFileId === file._id;
+            
+            return (
+              <div
+                key={file._id}
+                className={cn(
+                  "group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors",
+                  isSelected 
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground" 
+                    : "hover:bg-sidebar-accent/50 text-sidebar-foreground"
+                )}
+              >
+                {/* File button content */}
+                <div 
+                  className="flex items-center gap-2 flex-1 min-w-0"
+                  onClick={() => onSelectFile(file._id)}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="text-sm truncate flex-1">{file.title}</span>
+                  {file.isPublic ? (
+                    <Globe className="h-3 w-3 shrink-0 opacity-60" />
+                  ) : (
+                    <Lock className="h-3 w-3 shrink-0 opacity-60" />
+                  )}
+                </div>
+                
+                {/* Menu */}
+                {isEditable && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 shrink-0"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <MoreVertical className="h-3.5 w-3.5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-40">
+                      <DropdownMenuItem
+                        onClick={() => {
+                          setEditingFile(file._id);
+                          setEditTitle(file.title);
+                          setEditIcon(file.icon || "FileText");
+                        }}
+                      >
+                        <Edit2 className="mr-2 h-3.5 w-3.5" />
+                        Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => handleTogglePublic(file._id, file.isPublic)}
+                      >
+                        {file.isPublic ? (
+                          <>
+                            <Lock className="mr-2 h-3.5 w-3.5" />
+                            Make Private
+                          </>
+                        ) : (
+                          <>
+                            <Globe className="mr-2 h-3.5 w-3.5" />
+                            Make Public
+                          </>
+                        )}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => handleDeleteFile(file._id)}
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <Trash2 className="mr-2 h-3.5 w-3.5" />
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
+            );
+          })}
+          
+          {sortedFiles.length === 0 && (
+            <div className="text-center py-8 text-sm text-muted-foreground">
+              No additional pages
+            </div>
+          )}
         </div>
       </ScrollArea>
 
-      {/* Add File Dialog */}
-      <Dialog open={isAddingFile} onOpenChange={setIsAddingFile}>
-        <DialogContent className="sm:max-w-md">
+      {/* New File Dialog */}
+      <Dialog open={showNewFileDialog} onOpenChange={setShowNewFileDialog}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add New File</DialogTitle>
+            <DialogTitle>Create New Page</DialogTitle>
             <DialogDescription>
-              Choose a template or start with a blank file
+              Add a new page to your resume documentation.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>Template</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {templates?.map((template) => {
-                  const Icon = iconMap[template.icon] || File;
+              <Label htmlFor="title">Page Title</Label>
+              <Input
+                id="title"
+                placeholder="Enter page title..."
+                value={newFileTitle}
+                onChange={(e) => setNewFileTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleCreateFile();
+                  }
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="icon">Icon</Label>
+              <div className="grid grid-cols-4 gap-2">
+                {Object.keys(iconMap).map((iconName) => {
+                  const IconComponent = iconMap[iconName];
                   return (
-                    <button
-                      key={template._id}
-                      onClick={() => setSelectedTemplate(template.name)}
-                      className={cn(
-                        "flex items-center gap-2 p-3 rounded-md border text-left transition-colors",
-                        selectedTemplate === template.name
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:bg-muted/50"
-                      )}
+                    <Button
+                      key={iconName}
+                      variant={newFileIcon === iconName ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setNewFileIcon(iconName)}
+                      className="h-9"
                     >
-                      <Icon className="h-4 w-4 text-muted-foreground" />
-                      <div className="flex-1">
-                        <div className="text-sm font-medium">{template.name}</div>
-                        <div className="text-xs text-muted-foreground line-clamp-1">
-                          {template.description}
-                        </div>
-                      </div>
-                    </button>
+                      <IconComponent className="h-4 w-4" />
+                    </Button>
                   );
                 })}
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="filename">File Name</Label>
-              <Input
-                id="filename"
-                value={newFileName}
-                onChange={(e) => setNewFileName(e.target.value)}
-                placeholder="Enter file name..."
-              />
-            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAddingFile(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setShowNewFileDialog(false)}
+            >
               Cancel
             </Button>
-            <Button onClick={handleCreateFile} disabled={!newFileName.trim()}>
-              Create File
-            </Button>
+            <Button onClick={handleCreateFile}>Create Page</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Edit File Dialog */}
-      <Dialog open={!!editingFile} onOpenChange={(open) => !open && setEditingFile(null)}>
-        <DialogContent className="sm:max-w-md">
+      <Dialog open={!!editingFile} onOpenChange={() => setEditingFile(null)}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit File</DialogTitle>
+            <DialogTitle>Edit Page</DialogTitle>
+            <DialogDescription>
+              Update the page title and icon.
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-filename">File Name</Label>
+              <Label htmlFor="edit-title">Page Title</Label>
               <Input
-                id="edit-filename"
-                value={editingFile?.title || ""}
-                onChange={(e) =>
-                  setEditingFile((prev) => (prev ? { ...prev, title: e.target.value } : prev))
-                }
-                placeholder="Enter file name..."
+                id="edit-title"
+                placeholder="Enter page title..."
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && editingFile) {
+                    handleUpdateFile(editingFile);
+                  }
+                }}
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-icon">Icon</Label>
+              <div className="grid grid-cols-4 gap-2">
+                {Object.keys(iconMap).map((iconName) => {
+                  const IconComponent = iconMap[iconName];
+                  return (
+                    <Button
+                      key={iconName}
+                      variant={editIcon === iconName ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setEditIcon(iconName)}
+                      className="h-9"
+                    >
+                      <IconComponent className="h-4 w-4" />
+                    </Button>
+                  );
+                })}
+              </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingFile(null)}>
+            <Button
+              variant="outline"
+              onClick={() => setEditingFile(null)}
+            >
               Cancel
             </Button>
-            <Button onClick={handleUpdateFile}>
+            <Button
+              onClick={() => {
+                if (editingFile) {
+                  handleUpdateFile(editingFile);
+                }
+              }}
+            >
               Save Changes
             </Button>
           </DialogFooter>

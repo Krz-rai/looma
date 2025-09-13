@@ -37,6 +37,7 @@ export default defineSchema({
     resumeId: v.id("resumes"),
     title: v.string(),
     description: v.optional(v.string()),
+    connectedPageId: v.optional(v.id("dynamicFiles")),
     position: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),

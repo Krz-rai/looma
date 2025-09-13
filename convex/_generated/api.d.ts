@@ -22,6 +22,7 @@ import type * as fileTemplates from "../fileTemplates.js";
 import type * as fileUploads from "../fileUploads.js";
 import type * as github from "../github.js";
 import type * as githubSearch from "../githubSearch.js";
+import type * as http from "../http.js";
 import type * as migrations from "../migrations.js";
 import type * as projects from "../projects.js";
 import type * as resumes from "../resumes.js";
@@ -45,6 +46,7 @@ declare const fullApi: ApiFromModules<{
   fileUploads: typeof fileUploads;
   github: typeof github;
   githubSearch: typeof githubSearch;
+  http: typeof http;
   migrations: typeof migrations;
   projects: typeof projects;
   resumes: typeof resumes;

@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { Navbar } from "@/components/navbar";
 import { cn } from "@/lib/utils";
-import { Mail, Phone, MapPin, Globe as GlobeIcon } from "lucide-react";
+import { Mail, Phone, MapPin, Globe as GlobeIcon, SidebarOpen, X } from "lucide-react";
 import { LinkedinIcon, GithubIcon } from "@/components/icons";
 import {
   DropdownMenu,
@@ -39,11 +39,13 @@ import {
 export default function PublicResumePage() {
   const params = useParams();
   const resumeId = params.id as Id<"resumes">;
-  const [showChat] = useState(true); // Show chat by default
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(false);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [highlightedItem, setHighlightedItem] = useState<{ type: string; id: string } | null>(null);
   // const [isAnimating, setIsAnimating] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [selectedFileId, setSelectedFileId] = useState<Id<"dynamicFiles"> | null>(null);
+  const [highlightedLine, setHighlightedLine] = useState<string | null>(null);
   const [bulletPointsByProject, setBulletPointsByProject] = useState<{ [key: string]: {
     _id: Id<"bulletPoints">;
     projectId: Id<"projects">;
@@ -55,6 +57,7 @@ export default function PublicResumePage() {
   const resume = useQuery(api.resumes.get, { id: resumeId });
   const projects = useQuery(api.projects.list, resume ? { resumeId } : "skip");
   const dynamicFiles = useQuery(api.dynamicFiles.listPublic, resume ? { resumeId } : "skip");
+  
   
   // Clear highlight when clicking elsewhere on the page
   useEffect(() => {
@@ -115,7 +118,7 @@ export default function PublicResumePage() {
   }
 
   return (
-    <div className="h-screen bg-background overflow-hidden flex flex-col">
+    <div className="h-screen w-screen bg-background overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
       <Navbar 
         className="no-print"
         breadcrumbs={[
@@ -191,30 +194,210 @@ export default function PublicResumePage() {
       />
 
       <div className="flex-1 relative overflow-hidden pt-12">
-        <ResizablePanelGroup direction="horizontal" className="h-full">
-          {/* Left Sidebar - 20% */}
-          <ResizablePanel defaultSize={20} minSize={15} maxSize={30}>
-            <FileSidebar
-              resumeId={resumeId}
-              dynamicFiles={dynamicFiles || []}
-              selectedFileId={selectedFileId}
-              onSelectFile={setSelectedFileId}
-              isEditable={false}
-            />
-          </ResizablePanel>
-          
-          <ResizableHandle withHandle />
-          
-          {/* Center Content - Changes size based on chat visibility */}
-          <ResizablePanel defaultSize={showChat ? 50 : 80} minSize={30}>
-              <div className="h-full overflow-y-auto">
-                {selectedFileId ? (
-                  <DynamicFileViewer fileId={selectedFileId} isReadOnly={true} />
-                ) : (
-                  <main
-                    id="resume-content" 
-                    className="max-w-3xl mx-auto px-6 py-8"
+        {/* Main Content Area with AI Chat in Center */}
+        <div className="h-full flex relative overflow-hidden">
+          {/* Left Sidebar Overlay */}
+          <div 
+            className={cn(
+              "absolute left-0 top-0 h-full z-20 transition-all duration-300 ease-in-out",
+              leftSidebarOpen ? "w-80 shadow-xl" : "w-0"
+            )}
+          >
+            <div className="h-full bg-background border-r border-border/40 relative">
+              {leftSidebarOpen && (
+                <>
+                  <Button
+                    onClick={() => setLeftSidebarOpen(false)}
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-2 top-2 z-10 h-8 w-8"
                   >
+                    <X className="h-4 w-4" />
+                  </Button>
+                  <FileSidebar
+                    resumeId={resumeId}
+                    dynamicFiles={dynamicFiles || []}
+                    selectedFileId={selectedFileId}
+                    onSelectFile={setSelectedFileId}
+                    isEditable={false}
+                  />
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Toggle Button for Left Sidebar */}
+          {!leftSidebarOpen && (
+            <button
+              onClick={() => setLeftSidebarOpen(true)}
+              className="absolute left-0 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center gap-1.5 px-2 py-3 bg-background/95 backdrop-blur-sm hover:bg-muted/80 rounded-r-lg border border-l-0 border-border/50 shadow-sm transition-all group"
+            >
+              <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors" style={{ writingMode: 'vertical-lr' }}>Files</span>
+              <SidebarOpen className="h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+            </button>
+          )}
+
+          {/* Main Content with Resizable Panels */}
+          <ResizablePanelGroup 
+            direction="horizontal" 
+            className="h-full w-full"
+          >
+            {/* Center AI Chat Panel */}
+            <ResizablePanel defaultSize={100} minSize={30}>
+              <div className="h-full bg-background relative">
+                <ResumeChatV2
+                  resumeId={resumeId}
+                  className="h-full overflow-hidden"
+                  projects={projects}
+                  bulletPointsByProject={bulletPointsByProject}
+                  dynamicFiles={dynamicFiles}
+                  onCitationClick={(type: string, id: string, text: string) => {
+                // Handle GitHub citation clicks
+                if (type === 'github' && resume?.github) {
+                  // Extract username from github field (e.g., "Krz-rai" or "github.com/Krz-rai")
+                  const githubUrlMatch = resume.github.match(/(?:github\.com\/)?([a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38})\/?$/);
+                  if (githubUrlMatch) {
+                    const username = githubUrlMatch[1];
+                    // Check if id contains a specific repo name (format: "github:reponame")
+                    if (id && id.startsWith('github:')) {
+                      const repoName = id.substring(7); // Remove "github:" prefix
+                      window.open(`https://github.com/${username}/${repoName}`, '_blank');
+                    } else {
+                      // Just open the main profile
+                      window.open(`https://github.com/${username}`, '_blank');
+                    }
+                  }
+                  return;
+                }
+                
+                // Handle Portfolio citation clicks
+                if (type === 'portfolio' && resume?.portfolio) {
+                  const portfolioUrl = resume.portfolio.startsWith('http') 
+                    ? resume.portfolio 
+                    : `https://${resume.portfolio}`;
+                  
+                  // Check if id contains a specific page (format: "portfolio:/projects/name")
+                  if (id && id.startsWith('portfolio:')) {
+                    const path = id.substring(10); // Remove "portfolio:" prefix
+                    window.open(`${portfolioUrl}${path}`, '_blank');
+                  } else {
+                    // Just open the main portfolio
+                    window.open(portfolioUrl, '_blank');
+                  }
+                  return;
+                }
+                
+                // Handle Page citation clicks - show page content on right
+                if (type === 'page') {
+                  // Extract line number from text: "Page Title L#"
+                  const lineMatch = text.match(/\s+L([\d\-]+)$/);
+                  const lineNumber = lineMatch ? lineMatch[1] : null;
+                  
+                  console.log('📄 Page citation clicked:', { 
+                    type, 
+                    id, 
+                    text, 
+                    lineNumber,
+                    fullText: JSON.stringify(text)
+                  });
+                  
+                  setSelectedFileId(id as Id<"dynamicFiles">);
+                  setHighlightedLine(lineNumber);
+                  
+                  // Open right panel if not already open
+                  if (!rightPanelOpen) {
+                    setRightPanelOpen(true);
+                  }
+                  return;
+                }
+                
+                // Check if we need to switch from page view to resume view
+                const wasInPageView = selectedFileId !== null;
+                
+                // Clear page view to show resume content
+                if (selectedFileId) {
+                  setSelectedFileId(null);
+                  setHighlightedLine(null);
+                }
+                
+                // Open right panel to show resume content and scroll to citation
+                if (!rightPanelOpen) {
+                  setRightPanelOpen(true);
+                  // Panel will expand via the defaultSize prop change
+                }
+                
+                // If same item is clicked, just scroll to it
+                if (highlightedItem?.type === type && highlightedItem?.id === id) {
+                  setTimeout(() => {
+                    const element = document.getElementById(`${type}-${id}`);
+                    if (element) {
+                      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                  }, 100);
+                  return;
+                }
+                
+                // Clear previous highlight
+                setHighlightedItem(null);
+                
+                // Set new highlight after a brief delay to ensure clean transition
+                // Use longer delay if switching from page view to ensure DOM updates
+                const delay = wasInPageView ? 300 : 100;
+                setTimeout(() => {
+                  setHighlightedItem({ type, id });
+                  
+                  // Scroll to element
+                  const element = document.getElementById(`${type}-${id}`);
+                  if (element) {
+                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                }, delay);
+                  }}
+                  />
+              </div>
+            </ResizablePanel>
+            
+            {/* Always render handle and panel to preserve state */}
+            <ResizableHandle 
+              withHandle 
+              className={cn(
+                "transition-opacity duration-200",
+                !rightPanelOpen && "opacity-0 pointer-events-none"
+              )}
+            />
+            
+            {/* Right Panel with Resume Content - Always rendered to preserve state */}
+            <ResizablePanel 
+              defaultSize={50}
+              collapsible={true}
+              minSize={rightPanelOpen ? 20 : 0}
+              maxSize={70}
+              collapsedSize={rightPanelOpen ? undefined : 0}
+              onCollapse={() => setRightPanelOpen(false)}
+              onExpand={() => setRightPanelOpen(true)}
+            >
+              <div className={cn(
+                "h-full bg-background relative",
+                !rightPanelOpen && "hidden"
+              )}>
+                {selectedFileId ? (
+                  <div className="h-full border-l border-border/40">
+                    <DynamicFileViewer 
+                      fileId={selectedFileId} 
+                      isReadOnly={true}
+                      highlightLine={highlightedLine}
+                      onBack={() => {
+                        setSelectedFileId(null);
+                        setHighlightedLine(null);
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="h-full overflow-y-auto border-l border-border/40">
+                    <main
+                      id="resume-content" 
+                      className="max-w-3xl mx-auto px-6 py-8"
+                    >
                   {/* Resume Header - Notion-like hierarchy */}
                   <div className="mb-12 space-y-6">
                     {/* Name and Role */}
@@ -357,86 +540,24 @@ export default function PublicResumePage() {
                       </p>
                     </div>
                   )}
-                  </main>
+                    </main>
+                  </div>
                 )}
               </div>
             </ResizablePanel>
-            
-          {showChat && (
-            <>
-              <ResizableHandle withHandle />
-              
-              {/* Right Chat Panel - 30% */}
-              <ResizablePanel defaultSize={30} minSize={20} maxSize={40}>
-                <div className="h-full border-l border-border/40 bg-background">
-                  <ResumeChatV2 
-                  resumeId={resumeId} 
-                  className="h-full overflow-hidden" 
-                  onCitationClick={(type, id) => {
-                    // Handle GitHub citation clicks
-                    if (type === 'github' && resume?.github) {
-                      // Extract username from github field (e.g., "Krz-rai" or "github.com/Krz-rai")
-                      const githubUrlMatch = resume.github.match(/(?:github\.com\/)?([a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38})\/?$/);
-                      if (githubUrlMatch) {
-                        const username = githubUrlMatch[1];
-                        // Check if id contains a specific repo name (format: "github:reponame")
-                        if (id && id.startsWith('github:')) {
-                          const repoName = id.substring(7); // Remove "github:" prefix
-                          window.open(`https://github.com/${username}/${repoName}`, '_blank');
-                        } else {
-                          // Just open the main profile
-                          window.open(`https://github.com/${username}`, '_blank');
-                        }
-                      }
-                      return;
-                    }
-                    
-                    // Handle Portfolio citation clicks
-                    if (type === 'portfolio' && resume?.portfolio) {
-                      const portfolioUrl = resume.portfolio.startsWith('http') 
-                        ? resume.portfolio 
-                        : `https://${resume.portfolio}`;
-                      
-                      // Check if id contains a specific page (format: "portfolio:/projects/name")
-                      if (id && id.startsWith('portfolio:')) {
-                        const path = id.substring(10); // Remove "portfolio:" prefix
-                        window.open(`${portfolioUrl}${path}`, '_blank');
-                      } else {
-                        // Just open the main portfolio
-                        window.open(portfolioUrl, '_blank');
-                      }
-                      return;
-                    }
-                    
-                    // If same item is clicked, just scroll to it
-                    if (highlightedItem?.type === type && highlightedItem?.id === id) {
-                      const element = document.getElementById(`${type}-${id}`);
-                      if (element) {
-                        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                      }
-                      return;
-                    }
-                    
-                    // Clear previous highlight
-                    setHighlightedItem(null);
-                    
-                     // Set new highlight after a brief delay to ensure clean transition
-                     setTimeout(() => {
-                       setHighlightedItem({ type, id });
-                       
-                       // Scroll to element
-                       const element = document.getElementById(`${type}-${id}`);
-                       if (element) {
-                         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                       }
-                     }, 10);
-                  }}
-                  />
-                </div>
-              </ResizablePanel>
-            </>
+          </ResizablePanelGroup>
+          
+          {/* Toggle Button for Right Panel when collapsed */}
+          {!rightPanelOpen && (
+            <button
+              onClick={() => setRightPanelOpen(true)}
+              className="absolute right-0 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center gap-1.5 px-2 py-3 bg-background/95 backdrop-blur-sm hover:bg-muted/80 rounded-l-lg border border-r-0 border-border/50 shadow-sm transition-all group"
+            >
+              <SidebarOpen className="h-4 w-4 text-muted-foreground group-hover:text-foreground rotate-180" />
+              <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors leading-none" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Resume</span>
+            </button>
           )}
-        </ResizablePanelGroup>
+        </div>
       </div>
     </div>
   );

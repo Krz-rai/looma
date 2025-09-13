@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -12,14 +12,11 @@ import {
   Bot, 
   Copy, 
   Check,
-  ArrowDown,
-  FolderOpen,
-  Circle,
-  GitBranch,
-  Globe
+  ArrowDown
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+import { CitationTooltip } from "@/components/ui/citation-tooltip";
 
 interface Message {
   id: string;
@@ -33,6 +30,22 @@ interface ResumeChatProps {
   resumeId: Id<"resumes">;
   className?: string;
   onCitationClick?: (type: string, id: string, text: string) => void;
+  projects?: Array<{
+    _id: string;
+    title: string;
+    description?: string;
+    [key: string]: unknown;
+  }>;
+  bulletPointsByProject?: { [key: string]: Array<{
+    _id: string;
+    content: string;
+    [key: string]: unknown;
+  }> };
+  dynamicFiles?: Array<{
+    _id: string;
+    title: string;
+    [key: string]: unknown;
+  }>;
 }
 
 interface ChatResponse {
@@ -56,30 +69,42 @@ interface ChatResponse {
 }
 
 // Simple Message Content Component
-function MessageContent({ content, onCitationClick, idMapping }: { 
+function MessageContent({ content, onCitationClick, idMapping, projects, bulletPointsByProject, dynamicFiles }: { 
   content: string; 
   onCitationClick?: (type: string, id: string, text: string) => void;
   idMapping?: { reverse: Record<string, string> };
+  projects?: Array<{
+    _id: string;
+    title: string;
+    description?: string;
+    [key: string]: unknown;
+  }>;
+  bulletPointsByProject?: { [key: string]: Array<{
+    _id: string;
+    content: string;
+    [key: string]: unknown;
+  }> };
+  dynamicFiles?: Array<{
+    _id: string;
+    title: string;
+    [key: string]: unknown;
+  }>;
 }) {
   // Parse citations and create elements
   const parts = [];
   let lastIndex = 0;
   
-  // Track citation numbers
-  const bulletMap = new Map();
-  const branchMap = new Map();
-  const projectMap = new Map();
-  let bulletCounter = 0;
-  let branchCounter = 0;
-  let projectCounter = 0;
-  let githubCounter = 0;
-  let portfolioCounter = 0;
+  // Track citation numbers - sequential across all types
+  let citationCounter = 0;
   
-  // Find all citations (including GitHub and Portfolio)
-  const citationRegex = /\[(Project|Bullet|Branch|GitHub|Portfolio):\s*"([^"]+?)(?:\.\.\.)?"\]\s*\{([^}]*)\}/g;
+  // Find all citations - both valid and fallback
+  const citationRegex = /\[([^:]+):\s*"([^"]+?)(?:\.\.\.)?"\]\s*\{([^}]*)\}/g;
   let match;
   
   console.log('📝 Processing content for citations:', content.substring(0, 200));
+  
+  // Valid citation types
+  const validTypes = ['project', 'bullet', 'branch', 'github', 'portfolio', 'page'];
   
   while ((match = citationRegex.exec(content)) !== null) {
     // Add text before citation
@@ -90,6 +115,38 @@ function MessageContent({ content, onCitationClick, idMapping }: {
     const type = match[1].toLowerCase();
     const text = match[2];
     const simpleId = match[3];
+    
+    // Check if this is a valid citation type
+    if (!validTypes.includes(type)) {
+      // For invalid types (like "Resume Owner"), show as a numbered citation that links to resume
+      citationCounter++;
+      const num = citationCounter;
+      
+      parts.push(
+        <CitationTooltip
+          key={`fallback-${citationCounter}-${match.index}`}
+          source="Resume"
+          content={text}
+        >
+          <span
+            className="inline-flex items-center justify-center cursor-pointer ml-0.5 px-1.5 min-w-[18px] h-[18px] rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-[10px] font-medium text-gray-700 dark:text-gray-300 transition-all duration-200 hover:scale-105 align-baseline relative -top-[1px]"
+            onClick={(e) => {
+              e.stopPropagation();
+              // Scroll to top of resume
+              const resumeContent = document.getElementById('resume-content');
+              if (resumeContent) {
+                resumeContent.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }
+            }}
+          >
+            {num}
+          </span>
+        </CitationTooltip>
+      );
+      
+      lastIndex = match.index + match[0].length;
+      continue;
+    }
     
     // For GitHub citations with repo names (format: github:reponame) and Portfolio citations, preserve the full ID
     let id;
@@ -103,52 +160,48 @@ function MessageContent({ content, onCitationClick, idMapping }: {
     
     console.log('🎯 Citation found:', { type, text, simpleId, id });
     
-    // Generate citation number
-    let num;
-    let uniqueId = id;
-    if (type === 'github') {
-      githubCounter++;
-      num = 0; // GitHub citations don't show numbers
-      uniqueId = `github-${githubCounter}`; // Make each GitHub citation unique
-    } else if (type === 'portfolio') {
-      portfolioCounter++;
-      num = 0; // Portfolio citations don't show numbers
-      uniqueId = `portfolio-${portfolioCounter}`; // Make each Portfolio citation unique
-    } else if (type === 'project') {
-      if (!projectMap.has(id)) {
-        projectCounter++;
-        projectMap.set(id, projectCounter);
-      }
-      num = projectMap.get(id);
-    } else if (type === 'bullet') {
-      if (!bulletMap.has(id)) {
-        bulletCounter++;
-        bulletMap.set(id, bulletCounter);
-      }
-      num = bulletMap.get(id);
-    } else {
-      if (!branchMap.has(id)) {
-        branchCounter++;
-        branchMap.set(id, branchCounter);
-      }
-      num = branchMap.get(id);
-    }
+    // Generate citation number - always increment for each citation
+    citationCounter++;
+    const num = citationCounter;
     
-    // Add citation element
-    parts.push(
-      <Citation
-        key={`${type}-${uniqueId}-${match.index}`}  // Use uniqueId to ensure uniqueness
-        type={type}
-        text={text}
-        id={id}
-        num={num}
-        onClick={() => {
-          if (onCitationClick) {
-            onCitationClick(type, id, text);
-          }
-        }}
-      />
-    );
+    // Generate unique ID for key
+    const uniqueId = `${id}-${citationCounter}`;
+    
+    // Add citation element - use PageCitation for pages
+    if (type === 'page') {
+      const page = dynamicFiles?.find(f => f._id === id);
+      parts.push(
+        <PageCitation
+          key={`${type}-${uniqueId}-${match.index}`}
+          text={text}
+          id={id}
+          num={num}
+          page={page}
+          onClick={() => {
+            if (onCitationClick) {
+              onCitationClick(type, id, text);
+            }
+          }}
+        />
+      );
+    } else {
+      parts.push(
+        <Citation
+          key={`${type}-${uniqueId}-${match.index}`}  // Use uniqueId to ensure uniqueness
+          type={type}
+          text={text}
+          id={id}
+          num={num}
+          projects={projects}
+          bulletPointsByProject={bulletPointsByProject}
+          onClick={() => {
+            if (onCitationClick) {
+              onCitationClick(type, id, text);
+            }
+          }}
+        />
+      );
+    }
     
     lastIndex = match.index + match[0].length;
   }
@@ -206,66 +259,174 @@ function TextFragment({ text }: { text: string }) {
   return <span dangerouslySetInnerHTML={{ __html: formattedText }} />;
 }
 
-// Simple Citation Component
-function Citation({ type, text, id, num, onClick }: { 
-  type: string; 
-  text: string; 
-  id: string; 
+// Page Citation Component with content fetching
+function PageCitation({ text, id, num, onClick, page }: {
+  text: string;
+  id: string;
   num: number;
   onClick: () => void;
+  page?: {
+    _id: string;
+    title: string;
+    [key: string]: unknown;
+  };
 }) {
+  const pageContent = useQuery(api.dynamicFileContent.get, page ? { fileId: id as Id<"dynamicFiles"> } : "skip");
+  
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onClick();
   };
   
-  const baseStyle = "inline-flex items-center gap-1 cursor-pointer mx-0.5 px-1.5 py-0.5 rounded text-xs transition-all hover:bg-muted/60";
+  // Parse line number from text
+  const lineMatch = text.match(/\s+L([\d\-]+)$/);
+  const lineNum = lineMatch ? parseInt(lineMatch[1]) : null;
   
-  let icon;
-  let label;
+  let tooltipContent = page?.title || text;
+  // let lineIndicator = ""; // Not used currently
   
-  if (type === 'github') {
-    // GitHub icon SVG
-    icon = (
-      <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 24 24">
-        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-      </svg>
-    );
-    label = "GitHub";
-  } else if (type === 'portfolio') {
-    icon = <Globe className="h-3 w-3" />;
-    label = "Portfolio";
-  } else if (type === 'project') {
-    icon = <FolderOpen className="h-3 w-3 opacity-50" />;
-    label = text;
-  } else if (type === 'bullet') {
-    icon = <Circle className="h-2.5 w-2.5 opacity-50" />;
-    label = num.toString();
-  } else {
-    icon = <GitBranch className="h-3 w-3 opacity-50" />;
-    label = `B${num}`;
+  if (lineNum && pageContent?.content) {
+    // Extract the actual line content from BlockNote content
+    // BlockNote stores content as blocks
+    const blocks = pageContent.content || [];
+    
+    // Map line numbers to blocks (same mapping as in DynamicFileViewer)
+    const lineToBlockMap: { [key: number]: number } = {
+      1: 0, 2: 2, 3: 3, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9,
+      9: 11, 10: 12, 11: 13, 12: 14, 13: 15, 14: 16,
+      15: 17, 16: 18, 17: 19, 18: 20, 19: 22, 20: 23, 21: 24
+    };
+    
+    const blockIndex = lineToBlockMap[lineNum];
+    if (blockIndex !== undefined && blocks[blockIndex]) {
+      const block = blocks[blockIndex];
+      // Extract text from block content
+      if (block.content) {
+        const blockText = block.content.map((c: unknown) => {
+          if (typeof c === 'string') return c;
+          if (typeof c === 'object' && c !== null && 'text' in c) {
+            return (c as { text?: string }).text || '';
+          }
+          return '';
+        }).join('');
+        tooltipContent = blockText || tooltipContent;
+      }
+    }
+    
+    // lineIndicator = `${page?.title || 'Page'} • Line ${lineNum}`; // Not used currently
   }
   
   return (
-    <span 
-      className={cn(
-        baseStyle,
-        "text-muted-foreground border border-border/40 bg-background/50"
-      )}
-      onClick={handleClick}
-      title={text}
-      data-citation-type={type}
-      data-citation-id={id}
-      style={{ display: 'inline-flex', verticalAlign: 'baseline' }}
+    <CitationTooltip
+      source={page?.title || 'Page'}
+      line={lineNum || undefined}
+      content={tooltipContent}
     >
-      {icon}
-      <span className="font-medium">{label}</span>
-    </span>
+      <span
+        className="inline-flex items-center justify-center cursor-pointer ml-0.5 px-1.5 min-w-[18px] h-[18px] rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-[10px] font-medium text-gray-700 dark:text-gray-300 transition-all duration-200 hover:scale-105 align-baseline relative -top-[1px]"
+        onClick={handleClick}
+        data-citation-type="page"
+        data-citation-id={id}
+      >
+        {num}
+      </span>
+    </CitationTooltip>
+  );
+}
+
+// Simple Citation Component
+function Citation({ type, text, id, num, onClick, projects, bulletPointsByProject }: { 
+  type: string; 
+  text: string; 
+  id: string; 
+  num: number;
+  onClick: () => void;
+  projects?: Array<{
+    _id: string;
+    title: string;
+    description?: string;
+    [key: string]: unknown;
+  }>;
+  bulletPointsByProject?: { [key: string]: Array<{
+    _id: string;
+    content: string;
+    [key: string]: unknown;
+  }> };
+}) {
+  // Fetch branch content if needed
+  const branch = useQuery(api.branches.get, type === 'branch' ? { id: id as Id<"branches"> } : "skip");
+  
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onClick();
+  };
+  
+  // Fetch actual content for tooltip display
+  let tooltipContent = "";
+  
+  // Fetch actual content based on type
+  if (type === 'project' && projects) {
+    const project = projects.find(p => p._id === id);
+    if (project) {
+      // Show both title and description for projects
+      tooltipContent = project.title;
+      if (project.description) {
+        tooltipContent += "\n\n" + project.description;
+      }
+    }
+  } else if (type === 'bullet' && bulletPointsByProject) {
+    // Find bullet point across all projects
+    for (const bullets of Object.values(bulletPointsByProject)) {
+      const bullet = bullets.find((b) => b._id === id);
+      if (bullet) {
+        tooltipContent = bullet.content;
+        break;
+      }
+    }
+  } else if (type === 'branch' && branch) {
+    // Use fetched branch content
+    tooltipContent = branch.content || text;
+  }
+  
+  // Fallback to text if no content found
+  if (!tooltipContent) {
+    tooltipContent = text;
+  }
+  
+  // Get source type label for tooltip
+  const getSourceLabel = () => {
+    switch(type) {
+      case 'project': return 'Project';
+      case 'bullet': return 'Bullet Point';
+      case 'branch': return 'Branch';
+      case 'page': return 'Page';
+      case 'github': return 'GitHub';
+      case 'portfolio': return 'Portfolio';
+      default: return 'Source';
+    }
+  };
+  
+  const sourceInfo = { label: getSourceLabel() };
+  
+  return (
+    <CitationTooltip
+      source={sourceInfo.label}
+      content={tooltipContent}
+    >
+      <span
+        className="inline-flex items-center justify-center cursor-pointer ml-0.5 px-1.5 min-w-[18px] h-[18px] rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-[10px] font-medium text-gray-700 dark:text-gray-300 transition-all duration-200 hover:scale-105 align-baseline relative -top-[1px]"
+        onClick={handleClick}
+        data-citation-type={type}
+        data-citation-id={id}
+      >
+        {num}
+      </span>
+    </CitationTooltip>
   );
 }
 
 
-export function ResumeChatV2({ resumeId, className, onCitationClick }: ResumeChatProps) {
+export function ResumeChatV2({ resumeId, className, onCitationClick, projects, bulletPointsByProject, dynamicFiles }: ResumeChatProps) {
   const [idMapping, setIdMapping] = useState<{
     reverse: Record<string, string>; // simpleId -> convexId
   }>({ reverse: {} });
@@ -475,6 +636,9 @@ export function ResumeChatV2({ resumeId, className, onCitationClick }: ResumeCha
                           content={message.content}
                           onCitationClick={onCitationClick}
                           idMapping={idMapping}
+                          projects={projects}
+                          bulletPointsByProject={bulletPointsByProject}
+                          dynamicFiles={dynamicFiles}
                         />
                       </div>
                     )}

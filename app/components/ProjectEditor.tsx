@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Plus, Pencil, Trash2, GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageConnectionSelector } from "./PageConnectionSelector";
 import {
   DndContext,
   closestCenter,
@@ -39,6 +40,7 @@ interface ProjectEditorProps {
     resumeId: Id<"resumes">;
     title: string;
     description?: string;
+    connectedPageId?: Id<"dynamicFiles">;
     position: number;
   };
   onUpdate?: () => void;
@@ -274,7 +276,13 @@ export function ProjectEditor({
                     </p>
                   )}
                 </div>
-                <div className="flex gap-1">
+                <div className="flex gap-1 items-center">
+                  <PageConnectionSelector
+                    projectId={project._id}
+                    resumeId={project.resumeId}
+                    connectedPageId={project.connectedPageId}
+                  />
+                  <div className="h-4 w-px bg-border mx-1" />
                   <Button
                     onClick={() => setIsEditing(true)}
                     size="sm"

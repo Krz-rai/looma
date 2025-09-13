@@ -25,6 +25,68 @@ export const listPublic = query({
   },
 });
 
+export const getPublicPageContent = query({
+  args: { 
+    resumeId: v.id("resumes"),
+    pageQuery: v.string() // Can be page title or page ID
+  },
+  handler: async (ctx, args) => {
+    // First try to find by exact title match
+    let page = await ctx.db
+      .query("dynamicFiles")
+      .withIndex("by_resume", (q) => q.eq("resumeId", args.resumeId))
+      .filter((q) => q.and(
+        q.eq(q.field("isPublic"), true),
+        q.eq(q.field("title"), args.pageQuery)
+      ))
+      .first();
+    
+    // If not found by title, try case-insensitive partial match
+    if (!page) {
+      const allPublicPages = await ctx.db
+        .query("dynamicFiles")
+        .withIndex("by_resume", (q) => q.eq("resumeId", args.resumeId))
+        .filter((q) => q.eq(q.field("isPublic"), true))
+        .collect();
+      
+      const queryLower = args.pageQuery.toLowerCase();
+      page = allPublicPages.find(p => 
+        p.title.toLowerCase().includes(queryLower) ||
+        p._id.includes(args.pageQuery)
+      ) || null;
+    }
+    
+    if (!page) {
+      return {
+        success: false,
+        error: `No public page found matching "${args.pageQuery}"`,
+        availablePages: await ctx.db
+          .query("dynamicFiles")
+          .withIndex("by_resume", (q) => q.eq("resumeId", args.resumeId))
+          .filter((q) => q.eq(q.field("isPublic"), true))
+          .collect()
+          .then(pages => pages.map(p => p.title))
+      };
+    }
+    
+    // Get the page content
+    const content = await ctx.db
+      .query("dynamicFileContent")
+      .withIndex("by_file", (q) => q.eq("fileId", page._id))
+      .first();
+    
+    return {
+      success: true,
+      page: {
+        id: page._id,
+        title: page.title,
+        icon: page.icon,
+        content: content?.content || null
+      }
+    };
+  },
+});
+
 export const get = query({
   args: { id: v.id("dynamicFiles") },
   handler: async (ctx, args) => {
