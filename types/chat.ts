@@ -6,6 +6,9 @@ export interface Citation {
   text: string;
   simpleId: string;
   convexId: string;
+  timestamp?: number; // For audio citations - timestamp in seconds
+  audioId?: string;   // For audio citations - the audio transcription ID
+  audioFileName?: string; // For audio citations - the filename
 }
 
 export interface CustomUIMessage extends UIMessage {

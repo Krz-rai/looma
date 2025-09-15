@@ -387,6 +387,7 @@ ${resumeData.projects.map((project, pIndex) => {
         – Bullets:  [Bullet:"text"]{B#}
         – Branches: [Branch:"text"]{BR#}
         – Pages:    [Page:"Page Title L#"]{PG#}
+        – Audio:    [Audio:"filename T123"]{PG#:AudioID} (T123 = timestamp in seconds)
       • External (REQUIRED when found via search):
         – Portfolio main: [Portfolio:"Portfolio website"]{portfolio}
         – Portfolio project: [Portfolio:"ProjectName"]{portfolio}

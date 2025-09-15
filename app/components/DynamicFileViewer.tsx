@@ -4,29 +4,44 @@ import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { BlockNoteSchema, defaultBlockSpecs } from "@blocknote/core";
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import { Loader2 } from "lucide-react";
+import { AudioTranscriptionBlock } from "../../components/AudioTranscriptionBlock";
+
+// Types for BlockNote inline content items
+type InlineContentItem =
+  | string
+  | { type: 'text'; text: string; styles?: Record<string, unknown> }
+  | { type: 'link'; href: string; content: InlineContentItem[] }
+  | { type: string; [key: string]: unknown };
 
 interface DynamicFileViewerProps {
   fileId: Id<"dynamicFiles">;
   isReadOnly?: boolean;
   highlightLine?: string | null;
   onBack?: () => void;
+  autoPlayRequest?: {
+    fileName: string;
+    timestamp: number;
+  };
 }
 
 // Note: Removed unused resolveConvexUrls helper to satisfy no-unused-vars
 
-// Create the editor schema with default blocks
+// Create the editor schema with customized blocks - excluding audio and video
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const { audio, video, ...customBlockSpecs } = defaultBlockSpecs;
+// audio and video are excluded to prevent browser crashes
+
 const schema = BlockNoteSchema.create({
-  blockSpecs: defaultBlockSpecs,
+  blockSpecs: customBlockSpecs,
 });
 
-export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, onBack }: DynamicFileViewerProps) {
+export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, onBack, autoPlayRequest }: DynamicFileViewerProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
@@ -43,26 +58,31 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
   const generateUploadUrl = useMutation(api.fileUploads.generateUploadUrl);
   const saveFileMetadata = useMutation(api.fileUploads.saveFileMetadata);
   
-  // Upload file function for BlockNote
+  // Upload file function for BlockNote - Limited to images only
   const uploadFile = async (file: File) => {
+    // Only allow image uploads through BlockNote
+    if (!file.type.startsWith("image/")) {
+      throw new Error("Only image files can be uploaded through the editor. Use the audio transcription section above for audio files.");
+    }
+
     try {
       // Step 1: Get upload URL from Convex
       const uploadUrl = await generateUploadUrl();
-      
+
       // Step 2: Upload the file to the URL
       const result = await fetch(uploadUrl, {
         method: "POST",
         headers: { "Content-Type": file.type },
         body: file,
       });
-      
+
       if (!result.ok) {
         throw new Error("Failed to upload file");
       }
-      
+
       // Step 3: Get the storage ID from the response
       const { storageId } = await result.json();
-      
+
       // Step 4: Save file metadata to database and get URL
       const { url } = await saveFileMetadata({
         storageId,
@@ -71,20 +91,20 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
         fileSize: file.size,
         dynamicFileId: fileId,
       });
-      
+
       // Step 5: Return the actual URL for BlockNote to use
       if (!url) {
         throw new Error("Failed to get file URL");
       }
-      
+
       return url;
     } catch (error) {
       console.error("Error uploading file:", error);
       throw error;
     }
   };
-  
-  // Create the editor instance with upload functionality
+
+  // Create the editor instance with upload functionality (images only)
   const editor = useCreateBlockNote({
     schema,
     uploadFile: isReadOnly ? undefined : uploadFile,
@@ -246,58 +266,56 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
     const blocks = editor.document;
     console.log('📄 Total blocks in document:', blocks.length);
     
-    // Map line numbers to block indices
-    // Line numbers in the AI content correspond to logical content lines
-    // We need to map these to actual block indices
+    // Dynamic line mapping - count non-empty blocks as lines
     setTimeout(() => {
-      // Create a mapping of line numbers to blocks
-      // Based on the content structure from the AI:
-      // L1: Title (block 0)
-      // L2: System Overview (block 2)
-      // L3: First paragraph (block 3)
-      // L4: Architecture Components (block 5)
-      // L5: Stream Processing paragraph (block 6)
-      // L6: Machine Learning paragraph (block 7)
-      // L7: Feature Engineering paragraph (block 8)
-      // L8: Feature Store paragraph (block 9)
-      // L9: Performance Metrics (block 11)
-      // L10: Detection Accuracy (block 12)
-      // L11: Precision line (block 13)
-      // L12: Recall line (block 14)
-      // L13: False Positive line (block 15)
-      // L14: System Performance (block 16)
-      // L15: Transaction Processing line (block 17)
-      // L16: Scoring Latency line (block 18)
-      // L17: Model Serving line (block 19)
-      // L18: Uptime line (block 20)
-      // L19: Monitoring and Maintenance (block 22)
-      // L20: Model Health paragraph (block 23)
-      // L21: Operational Excellence paragraph (block 24)
-      
-      const lineToBlockMap: { [key: number]: number } = {
-        1: 0,   // Title
-        2: 2,   // System Overview
-        3: 3,   // First paragraph
-        4: 5,   // Architecture Components
-        5: 6,   // Stream Processing
-        6: 7,   // Machine Learning
-        7: 8,   // Feature Engineering
-        8: 9,   // Feature Store
-        9: 11,  // Performance Metrics
-        10: 12, // Detection Accuracy
-        11: 13, // Precision
-        12: 14, // Recall
-        13: 15, // False Positive Reduction
-        14: 16, // System Performance
-        15: 17, // Transaction Processing
-        16: 18, // Scoring Latency
-        17: 19, // Model Serving
-        18: 20, // Uptime
-        19: 22, // Monitoring and Maintenance
-        20: 23, // Model Health
-        21: 24  // Operational Excellence
-      };
-      
+      // Build a dynamic mapping by counting actual content blocks
+      let lineNumber = 1;
+      const lineToBlockMap: { [key: number]: number } = {};
+
+      blocks.forEach((block, index) => {
+        // Check if block has actual content (not just empty or formatting)
+        const hasContent = block.content &&
+          Array.isArray(block.content) &&
+          block.content.length > 0 &&
+          block.content.some((item: InlineContentItem) => {
+            if (typeof item === 'string') {
+              return item.trim() !== '';
+            }
+            if (typeof item === 'object' && item !== null) {
+              if ('text' in item && typeof item.text === 'string') {
+                return item.text.trim() !== '';
+              }
+              if ('type' in item && item.type === 'link' && 'content' in item && Array.isArray(item.content)) {
+                return item.content.some((linkItem: InlineContentItem) => {
+                  if (typeof linkItem === 'string') {
+                    return linkItem.trim() !== '';
+                  }
+                  if (typeof linkItem === 'object' && linkItem !== null && 'text' in linkItem && typeof linkItem.text === 'string') {
+                    return linkItem.text.trim() !== '';
+                  }
+                  return false;
+                });
+              }
+            }
+            return false;
+          });
+
+        // Also count heading blocks and list items
+        const isContentBlock = hasContent ||
+          block.type === 'heading' ||
+          block.type === 'bulletListItem' ||
+          block.type === 'numberedListItem' ||
+          (block.type === 'paragraph' && hasContent);
+
+        if (isContentBlock) {
+          lineToBlockMap[lineNumber] = index;
+          console.log(`📍 Line ${lineNumber} → Block ${index} (${block.type})`);
+          lineNumber++;
+        }
+      });
+
+      console.log('📊 Dynamic line mapping created:', lineToBlockMap);
+
       const blockIndex = lineToBlockMap[startLine];
       
       if (blockIndex !== undefined && blockIndex < blocks.length) {
@@ -390,9 +408,9 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* Header - Matching Aurea style */}
-      <div className="px-4 py-3 border-b border-border/40">
+      <div className="px-4 py-3 border-b border-border/40 flex-shrink-0">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">{file.title}</span>
           <div className="flex items-center gap-3">
@@ -427,9 +445,17 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
       </div>
 
       {/* Editor */}
-      <ScrollArea className="flex-1">
-        <div className="max-w-4xl mx-auto px-6 py-8">
-          <BlockNoteView 
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+          {/* Audio Transcription Block */}
+          <AudioTranscriptionBlock
+            dynamicFileId={fileId}
+            isReadOnly={isReadOnly}
+            autoPlayRequest={autoPlayRequest}
+          />
+
+          {/* BlockNote Editor */}
+          <BlockNoteView
             editor={editor}
             theme="light"
             className="min-h-[500px]"
@@ -438,7 +464,7 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
             linkToolbar={true}
           />
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }

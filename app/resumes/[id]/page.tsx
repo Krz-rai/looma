@@ -46,6 +46,10 @@ export default function PublicResumePage() {
   const [copiedLink, setCopiedLink] = useState(false);
   const [selectedFileId, setSelectedFileId] = useState<Id<"dynamicFiles"> | null>(null);
   const [highlightedLine, setHighlightedLine] = useState<string | null>(null);
+  const [audioPlayRequest, setAudioPlayRequest] = useState<{
+    fileName: string;
+    timestamp: number;
+  } | undefined>(undefined);
   const [bulletPointsByProject, setBulletPointsByProject] = useState<{ [key: string]: {
     _id: Id<"bulletPoints">;
     projectId: Id<"projects">;
@@ -57,8 +61,8 @@ export default function PublicResumePage() {
   const resume = useQuery(api.resumes.get, { id: resumeId });
   const projects = useQuery(api.projects.list, resume ? { resumeId } : "skip");
   const dynamicFiles = useQuery(api.dynamicFiles.listPublic, resume ? { resumeId } : "skip");
-  
-  
+  const branchesByBulletPoint = useQuery(api.branches.listByResume, resume ? { resumeId } : "skip");
+
   // Clear highlight when clicking elsewhere on the page
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -218,7 +222,10 @@ export default function PublicResumePage() {
                     resumeId={resumeId}
                     dynamicFiles={dynamicFiles || []}
                     selectedFileId={selectedFileId}
-                    onSelectFile={setSelectedFileId}
+                    onSelectFile={(fileId) => {
+                      setSelectedFileId(fileId);
+                      setAudioPlayRequest(undefined); // Clear audio request when manually selecting a file
+                    }}
                     isEditable={false}
                   />
                 </>
@@ -251,6 +258,7 @@ export default function PublicResumePage() {
                   projects={projects}
                   bulletPointsByProject={bulletPointsByProject}
                   dynamicFiles={dynamicFiles}
+                  branchesByBulletPoint={branchesByBulletPoint}
                   onCitationClick={(type: string, id: string, text: string) => {
                 // Handle GitHub citation clicks
                 if (type === 'github' && resume?.github) {
@@ -287,23 +295,70 @@ export default function PublicResumePage() {
                   return;
                 }
                 
+                // Handle Audio citation clicks - open page and play audio at timestamp
+                if (type === 'audio') {
+                  // Parse audio data from id format: "audio:<pageConvexId>:<filename>:<timestamp>"
+                  const [, pageId, fileName, timestampStr] = id.split(':');
+                  const timestamp = parseInt(timestampStr) || 0;
+
+                  console.log('🎵 Audio citation clicked:', {
+                    pageId,
+                    fileName,
+                    timestamp,
+                    text
+                  });
+
+                  // Open the page
+                  setSelectedFileId(pageId as Id<"dynamicFiles">);
+                  setHighlightedLine(null);
+
+                  // Set the audio play request
+                  setAudioPlayRequest({ fileName, timestamp });
+
+                  // Open right panel if not already open
+                  if (!rightPanelOpen) {
+                    setRightPanelOpen(true);
+                  }
+
+                  return;
+                }
+
                 // Handle Page citation clicks - show page content on right
                 if (type === 'page') {
-                  // Extract line number from text: "Page Title L#"
-                  const lineMatch = text.match(/\s+L([\d\-]+)$/);
+                  // Extract line number from text which could be:
+                  // - "Real-Time Fraud Detection System L15" (with quotes in the text)
+                  // - Real-Time Fraud Detection System L15 (without quotes)
+                  // The text parameter already has quotes stripped, so just look for L# pattern
+                  const lineMatch = text.match(/\bL(\d+)(?:-L\d+)?/);
                   const lineNumber = lineMatch ? lineMatch[1] : null;
-                  
-                  console.log('📄 Page citation clicked:', { 
-                    type, 
-                    id, 
-                    text, 
+
+                  console.log('📄 Page citation clicked:', {
+                    type,
+                    id,
+                    text,
                     lineNumber,
-                    fullText: JSON.stringify(text)
+                    fullText: JSON.stringify(text),
+                    lineMatch
                   });
-                  
-                  setSelectedFileId(id as Id<"dynamicFiles">);
-                  setHighlightedLine(lineNumber);
-                  
+
+                  // Clear any audio play request when switching to a different page
+                  setAudioPlayRequest(undefined);
+
+                  // Check if clicking the same page citation that's already highlighted
+                  const isAlreadyHighlighted = selectedFileId === id && highlightedLine === lineNumber;
+
+                  if (isAlreadyHighlighted) {
+                    // Force re-highlight by clearing and re-setting
+                    setHighlightedLine(null);
+                    setTimeout(() => {
+                      setHighlightedLine(lineNumber);
+                    }, 50);
+                  } else {
+                    // Normal highlight for different citation
+                    setSelectedFileId(id as Id<"dynamicFiles">);
+                    setHighlightedLine(lineNumber);
+                  }
+
                   // Open right panel if not already open
                   if (!rightPanelOpen) {
                     setRightPanelOpen(true);
@@ -345,12 +400,17 @@ export default function PublicResumePage() {
                 const delay = wasInPageView ? 300 : 100;
                 setTimeout(() => {
                   setHighlightedItem({ type, id });
-                  
-                  // Scroll to element
-                  const element = document.getElementById(`${type}-${id}`);
-                  if (element) {
-                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  }
+
+                  // For branches, we need additional delay to ensure the bullet point expands
+                  const scrollDelay = type === 'branch' ? 200 : 0;
+
+                  setTimeout(() => {
+                    // Scroll to element
+                    const element = document.getElementById(`${type}-${id}`);
+                    if (element) {
+                      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                  }, scrollDelay);
                 }, delay);
                   }}
                   />
@@ -381,10 +441,11 @@ export default function PublicResumePage() {
                 !rightPanelOpen && "hidden"
               )}>
                 {selectedFileId ? (
-                  <div className="h-full border-l border-border/40">
-                    <DynamicFileViewer 
-                      fileId={selectedFileId} 
+                  <div className="h-full border-l border-border/40 overflow-hidden">
+                    <DynamicFileViewer
+                      fileId={selectedFileId}
                       isReadOnly={true}
+                      autoPlayRequest={audioPlayRequest}
                       highlightLine={highlightedLine}
                       onBack={() => {
                         setSelectedFileId(null);
@@ -563,13 +624,14 @@ export default function PublicResumePage() {
   );
 }
 
-function ProjectView({ project, highlightedItem, index, setBulletPointsByProject }: { 
+function ProjectView({ project, highlightedItem, index, setBulletPointsByProject }: {
   project: {
     _id: Id<"projects">;
     resumeId: Id<"resumes">;
     title: string;
     description?: string;
     position: number;
+    connectedPageId?: Id<"dynamicFiles">;
   };
   highlightedItem: { type: string; id: string } | null;
   index: number;
@@ -581,8 +643,8 @@ function ProjectView({ project, highlightedItem, index, setBulletPointsByProject
     hasBranches: boolean;
   }[] }>>;
 }) {
-  const bulletPoints = useQuery(api.bulletPoints.list, { 
-    projectId: project._id 
+  const bulletPoints = useQuery(api.bulletPoints.list, {
+    projectId: project._id
   });
   
   React.useEffect(() => {
@@ -635,6 +697,9 @@ function ProjectView({ project, highlightedItem, index, setBulletPointsByProject
                 bulletPoint={bulletPoint}
                 isEditable={false}
                 highlightedItem={highlightedItem}
+                connectedPageId={project.connectedPageId}
+                projectTitle={project.title}
+                resumeId={project.resumeId}
               />
             ))}
           </div>

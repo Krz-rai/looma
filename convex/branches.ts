@@ -47,30 +47,85 @@ export const get = query({
     if (!branch) {
       return null;
     }
-    
+
     const bulletPoint = await ctx.db.get(branch.bulletPointId);
     if (!bulletPoint) {
       return null;
     }
-    
+
     const project = await ctx.db.get(bulletPoint.projectId);
     if (!project) {
       return null;
     }
-    
+
     const resume = await ctx.db.get(project.resumeId);
     if (!resume) {
       return null;
     }
-    
+
     const identity = await ctx.auth.getUserIdentity();
     const isOwner = identity?.subject === resume.userId;
-    
+
     if (!resume.isPublic && !isOwner) {
       return null;
     }
-    
+
     return branch;
+  },
+});
+
+export const listByResume = query({
+  args: {
+    resumeId: v.id("resumes"),
+  },
+  handler: async (ctx, args) => {
+    const resume = await ctx.db.get(args.resumeId);
+    if (!resume) {
+      return {};
+    }
+
+    const identity = await ctx.auth.getUserIdentity();
+    const isOwner = identity?.subject === resume.userId;
+
+    if (!resume.isPublic && !isOwner) {
+      return {};
+    }
+
+    // Get all projects for this resume
+    const projects = await ctx.db
+      .query("projects")
+      .withIndex("by_resume", (q) => q.eq("resumeId", args.resumeId))
+      .collect();
+
+    // Get all bullet points for all projects
+    const allBulletPoints = await Promise.all(
+      projects.map(project =>
+        ctx.db
+          .query("bulletPoints")
+          .withIndex("by_project_position", (q) => q.eq("projectId", project._id))
+          .collect()
+      )
+    );
+
+    // Flatten the bullet points array
+    const bulletPoints = allBulletPoints.flat();
+
+    // Get branches for each bullet point
+    const branchesByBulletPoint: Record<string, any[]> = {};
+
+    for (const bulletPoint of bulletPoints) {
+      const branches = await ctx.db
+        .query("branches")
+        .withIndex("by_bullet_point_position", (q) => q.eq("bulletPointId", bulletPoint._id))
+        .order("asc")
+        .collect();
+
+      if (branches.length > 0) {
+        branchesByBulletPoint[bulletPoint._id] = branches;
+      }
+    }
+
+    return branchesByBulletPoint;
   },
 });
 

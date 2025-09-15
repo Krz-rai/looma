@@ -107,4 +107,29 @@ export default defineSchema({
     uploadedAt: v.number(),
   })
     .index("by_dynamic_file", ["dynamicFileId"]),
+
+  audioTranscriptions: defineTable({
+    dynamicFileId: v.id("dynamicFiles"),
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    transcription: v.string(),
+    language: v.optional(v.string()),
+    duration: v.optional(v.number()),
+    segments: v.optional(v.array(v.object({
+      text: v.string(),
+      start: v.number(),
+      end: v.number(),
+    }))),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("processing"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_dynamic_file", ["dynamicFileId"])
+    .index("by_status", ["status"]),
 });

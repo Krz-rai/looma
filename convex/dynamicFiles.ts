@@ -26,7 +26,7 @@ export const listPublic = query({
 });
 
 export const getPublicPageContent = query({
-  args: { 
+  args: {
     resumeId: v.id("resumes"),
     pageQuery: v.string() // Can be page title or page ID
   },
@@ -40,7 +40,7 @@ export const getPublicPageContent = query({
         q.eq(q.field("title"), args.pageQuery)
       ))
       .first();
-    
+
     // If not found by title, try case-insensitive partial match
     if (!page) {
       const allPublicPages = await ctx.db
@@ -48,14 +48,14 @@ export const getPublicPageContent = query({
         .withIndex("by_resume", (q) => q.eq("resumeId", args.resumeId))
         .filter((q) => q.eq(q.field("isPublic"), true))
         .collect();
-      
+
       const queryLower = args.pageQuery.toLowerCase();
-      page = allPublicPages.find(p => 
+      page = allPublicPages.find(p =>
         p.title.toLowerCase().includes(queryLower) ||
         p._id.includes(args.pageQuery)
       ) || null;
     }
-    
+
     if (!page) {
       return {
         success: false,
@@ -68,20 +68,113 @@ export const getPublicPageContent = query({
           .then(pages => pages.map(p => p.title))
       };
     }
-    
+
     // Get the page content
     const content = await ctx.db
       .query("dynamicFileContent")
       .withIndex("by_file", (q) => q.eq("fileId", page._id))
       .first();
-    
+
+    // Get audio transcriptions for this page
+    const transcriptions = await ctx.db
+      .query("audioTranscriptions")
+      .withIndex("by_dynamic_file", (q) => q.eq("dynamicFileId", page._id))
+      .filter((q) => q.eq(q.field("status"), "completed"))
+      .collect();
+
+    // Format content with transcriptions included
+    let enhancedContent = content?.content || null;
+
+    // If there are transcriptions, append them to the content for AI visibility
+    if (transcriptions.length > 0 && enhancedContent) {
+      // Add transcriptions as a special section that the AI can see
+      const transcriptionSection = transcriptions.map((t, index) => {
+        // If segments exist, format with timestamps for each segment
+        if (t.segments && t.segments.length > 0) {
+          const segmentContent = t.segments.map((seg: any, segIdx: number) => ({
+            type: "text",
+            text: `\n[TS${segIdx+1}:${Math.floor(seg.start)}s] ${seg.text}`,
+            styles: {}
+          }));
+
+          return {
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                text: `\n[Audio Transcription ${index + 1}: ${t.fileName} AudioID:${t._id}]`,
+                styles: { bold: true }
+              },
+              ...segmentContent,
+              ...(t.language ? [{
+                type: "text",
+                text: `\n(Language: ${t.language}${t.duration ? `, Duration: ${Math.round(t.duration)}s` : ''})`,
+                styles: { italic: true }
+              }] : [])
+            ]
+          };
+        } else {
+          // Fallback to full transcription without timestamps
+          return {
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                text: `\n[Audio Transcription ${index + 1}: ${t.fileName} AudioID:${t._id}]`,
+                styles: { bold: true }
+              },
+              {
+                type: "text",
+                text: `\n${t.transcription}`,
+                styles: {}
+              },
+              ...(t.language ? [{
+                type: "text",
+                text: `\n(Language: ${t.language}${t.duration ? `, Duration: ${Math.round(t.duration)}s` : ''})`,
+                styles: { italic: true }
+              }] : [])
+            ]
+          };
+        }
+      });
+
+      // If content is an array (BlockNote format), append transcriptions
+      if (Array.isArray(enhancedContent)) {
+        enhancedContent = [...enhancedContent, ...transcriptionSection];
+      } else if (typeof enhancedContent === 'string') {
+        // If content is a string, append as text with timestamps
+        const transcriptionText = transcriptions.map((t, index) => {
+          if (t.segments && t.segments.length > 0) {
+            const segmentText = t.segments.map((seg: any, segIdx: number) =>
+              `[T${segIdx+1}:${Math.floor(seg.start)}s] ${seg.text}`
+            ).join('\n');
+            return `\n\n[Audio Transcription ${index + 1}: ${t.fileName} AudioID:${t._id}]\n${segmentText}${
+              t.language ? `\n(Language: ${t.language}${t.duration ? `, Duration: ${Math.round(t.duration)}s` : ''})` : ''
+            }`;
+          } else {
+            return `\n\n[Audio Transcription ${index + 1}: ${t.fileName} AudioID:${t._id}]\n${t.transcription}${
+              t.language ? `\n(Language: ${t.language}${t.duration ? `, Duration: ${Math.round(t.duration)}s` : ''})` : ''
+            }`;
+          }
+        }).join('');
+        enhancedContent = enhancedContent + transcriptionText;
+      }
+    }
+
     return {
       success: true,
       page: {
         id: page._id,
         title: page.title,
         icon: page.icon,
-        content: content?.content || null
+        content: enhancedContent,
+        transcriptions: transcriptions.map(t => ({
+          id: t._id,
+          fileName: t.fileName,
+          transcription: t.transcription,
+          language: t.language,
+          duration: t.duration
+        }))
       }
     };
   },
