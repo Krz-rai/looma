@@ -112,17 +112,6 @@ export function EchoTranscriptModal({
                 showFilledProgress={true}
                 autoPlayAfterSrcChange={false}
                 layout="horizontal"
-                customProgressBarSection={[
-                  "CURRENT_TIME",
-                  "PROGRESS_BAR",
-                  "DURATION",
-                ]}
-                customControlsSection={[
-                  "MAIN_CONTROLS",
-                  "VOLUME_CONTROLS",
-                ]}
-                customAdditionalControls={[]}
-                customVolumeControls={["VOLUME"]}
                 className="shadow-none bg-transparent"
               />
             </div>
@@ -135,7 +124,9 @@ export function EchoTranscriptModal({
                 segments.map((segment, idx) => (
                   <div
                     key={idx}
-                    ref={(el) => (segmentRefs.current[idx] = el)}
+                    ref={(el) => {
+                      segmentRefs.current[idx] = el;
+                    }}
                     className={cn(
                       "p-3 rounded-lg border transition-all cursor-pointer group",
                       activeSegmentIndex === idx

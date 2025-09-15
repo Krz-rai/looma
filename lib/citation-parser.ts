@@ -180,23 +180,23 @@ export function parseCitations(
 
       // For echo citations, we don't extract embedded text anymore
       // The actual content will be fetched from audioTranscriptions data
-      let fullEchoText = undefined;
+      const fullEchoText: string | undefined = undefined;
 
       // Map page ID to Convex ID
       const pageConvexId = idMapping && idMapping.reverse[id] ? idMapping.reverse[id] : id;
       console.log('🎵 Mapped page ID for audio summary:', { id, pageConvexId });
 
       const audioSummaryCitation = {
-        type: 'echo',
+        type: 'echo' as const,
         text: pointMatch ? `Echo P${pointNumber}` : text, // Clean display text
         simpleId: id,
         convexId: pageConvexId,
         timestamp: pointNumber, // Store point number in timestamp field
-        fullText: fullEchoText // Store the actual echo content
+        fullText: fullEchoText as string | undefined // Store the actual echo content
       };
       console.log('✅ Adding echo citation with fullText:', {
         ...audioSummaryCitation,
-        fullTextPreview: audioSummaryCitation.fullText?.substring(0, 50) + '...'
+        fullTextPreview: typeof audioSummaryCitation.fullText === 'string' ? audioSummaryCitation.fullText.substring(0, 50) + '...' : 'No content'
       });
       citations.push(audioSummaryCitation);
     } else if (type === 'audio') {

@@ -5,6 +5,7 @@ import { api } from "./_generated/api";
 import { httpAction } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import type { LanguageModelV2Middleware, LanguageModelV2StreamPart } from '@ai-sdk/provider';
+import { createOpenAI } from '@ai-sdk/openai';
 
 const http = httpRouter();
 
@@ -213,13 +214,6 @@ const piiRedactionMiddleware: LanguageModelV2Middleware = {
   },
 };
 
-// Extract reasoning middleware - disabled for now as GPT-5 handles reasoning differently
-// GPT-5 uses reasoningSummary parameter instead
-// const reasoningMiddleware = extractReasoningMiddleware({
-//   tagName: 'thinking',
-//   separator: '\n',
-//   startWithReasoning: false,
-// });
 
 // Default settings middleware - applies consistent defaults
 const defaultSettings = defaultSettingsMiddleware({
@@ -239,6 +233,7 @@ const allMiddleware = [
   // reasoningMiddleware removed - GPT-5 handles reasoning via providerOptions
 ];
 
+
 // Helper function to create wrapped Cerebras model
 function createWrappedCerebrasModel(cerebras: any, modelName: string = 'gpt-oss-120b') {
   console.log(`🚀 [MODEL] Creating wrapped Cerebras ${modelName} with middleware`);
@@ -246,6 +241,17 @@ function createWrappedCerebrasModel(cerebras: any, modelName: string = 'gpt-oss-
   console.log(`🔧 [MODEL] Middleware names: defaultSettings, logging, caching, rateLimit, piiRedaction`);
   return wrapLanguageModel({
     model: cerebras(modelName),
+    middleware: allMiddleware,
+  });
+}
+
+// Helper function to create wrapped OpenAI model
+function createWrappedOpenAIModel(openai: any, modelName: string = 'gpt-4o') {
+  console.log(`🚀 [MODEL] Creating wrapped OpenAI ${modelName} with middleware`);
+  console.log(`🔧 [MODEL] Middleware count: ${allMiddleware.length}`);
+  console.log(`🔧 [MODEL] Middleware names: defaultSettings, logging, caching, rateLimit, piiRedaction`);
+  return wrapLanguageModel({
+    model: openai(modelName),
     middleware: allMiddleware,
   });
 }
@@ -458,98 +464,69 @@ ${resumeData.projects.map((project, pIndex) => {
     }).join('\n\n');
 
     // System prompt using XML-based instructions from instructions.xml
-    const systemPrompt = `<SYSTEM role="Aurea" version="1.0">
-  <scope>
-    Discuss anything related to this candidate found in their resume, projects, pages, echoes, and portfolio - including personal traits, characteristics, statements, and claims they make.
-    EXCEPTION: Always provide help for emergency situations, medical emergencies, or safety-critical information when requested.
-    Only decline truly off-topic requests unrelated to the candidate (e.g., cooking recipes, weather, general programming tutorials) unless they are emergencies.
-    For non-emergency off-topic requests, respond: "I can only discuss information related to this resume and candidate."
-    For emergency requests, provide the needed information immediately (e.g., "Emergency services in the US: Call 911").
-  </scope>
+    const systemPrompt = `You are Aurea, an AI assistant specialized in discussing candidate information from resumes, projects, and portfolios.
 
-  <objectives>
-    ALWAYS search through ALL available data first - resume, all pages, portfolio, echoes - to gather complete context before responding.
-    Provide thorough, moderate-length responses that fully address the user's question. Don't rush answers into 1-2 bullets.
-    Include relevant details, context, and explanations. Give complete answers that demonstrate deep understanding of the candidate's work.
-    When discussing technical topics, explain the approach, implementation, and impact comprehensively.
-    Prefer specifics (numbers, throughput, latency, savings, team size) but also provide context around these metrics.
-  </objectives>
-
-  <data>
-    <resume_context>${resumeContext}</resume_context>
-    <available_pages>Projects with connected pages available for detailed information</available_pages>
-    ${conversationContext ? `<recent_conversation>${conversationContext}</recent_conversation>` : ''}
-  </data>
-
-  <tools use="proactively">
-    <tool name="search_content">ALWAYS use FIRST and EXTENSIVELY to find ALL relevant information across resume, pages, and echoes.</tool>
-    <tool name="search_page_content">IMMEDIATELY fetch ALL relevant pages - don't wait. Search broadly to ensure complete context.</tool>
-    <tool name="scrape_portfolio">Use when a portfolio URL is present or asked about.</tool>
-    <tool name="web_search">Use only if the user explicitly asks to compare with public sources.</tool>
-    <proactive_rule>
-      CRITICAL: For EVERY user question, no matter how simple:
-      1. FIRST search extensively using search_content with multiple relevant terms
-      2. Fetch ALL related pages using search_page_content - cast a wide net
-      3. Search for variations of terms (e.g., if asked about "ML", also search "machine learning", "model", "training")
-      4. Check echoes, portfolio, and all project documentation
-      5. Only after gathering ALL available information, formulate a complete response
-      6. Your response should reflect the FULL depth of available information
-      7. Don't summarize prematurely - provide comprehensive answers
-
-      CRITICAL - TEXT GENERATION REQUIREMENT:
-      After using ANY tools (search_content, search_page_content, etc.), you MUST ALWAYS generate a text response.
-      Never end your output with only tool calls - always follow with your analysis and findings.
-      Even if searches return no results, explain what you searched for and what wasn't found.
-      The user expects a response after every query - tool usage alone is not sufficient.
-    </proactive_rule>
-  </tools>
-
-  <citations>
-    <rule>Exactly one citation per bullet, placed at the end.</rule>
-    <format type="project">[Project:"title"]{P#}</format>
-    <format type="bullet">[Bullet:"brief text"]{B#}</format>
-    <format type="branch">[Branch:"brief text"]{BR#}</format>
-    <format type="page-line">[Title L#]{PG#} - ONLY for non-echo content</format>
-    <format type="echo">[Echo P#]{PG#} - REQUIRED when citing echo points</format>
-    <format type="portfolio">[Portfolio:"short context"]{portfolio}</format>
-    <format type="web">[Web: domain]{web}</format>
-
-  </citations>
-
-  <output>
-    <shape>Bulleted list only; each bullet = 1 concrete fact + 1 citation.</shape>
-    <style>Natural, confident, concise; no tool narration or disclaimers. Include genuine reactions and opinions (e.g., "That's actually impressive", "Pretty ambitious for a 3-person team", "Solid for this use case").</style>
-    <opinions>Add professional insights, assessments, and contextual reactions that show understanding of the technical landscape.</opinions>
-  </output>
-
-  <reasoning hidden_tag="thinking">
-    <guidance>Place any hidden reasoning inside <thinking>...</thinking> and keep it brief.</guidance>
-    <must>Always produce the final user-visible bullets after the hidden reasoning block.</must>
-  </reasoning>
-
-  <rules>
-    <rule>CRITICAL: Always use search_page_content PROACTIVELY - don't wait to be asked for details.</rule>
-    <rule>When you see a project with a connected page in the resume context, IMMEDIATELY fetch that page.</rule>
-    <rule>Use search_content liberally to find specific information - search for multiple terms.</rule>
-    <rule>Do not invent unsupported facts—use tools to verify before asserting.</rule>
-    <rule>If a requested fact is absent in the provided data/tools, say you can't find it.</rule>
-    <rule>No preambles, no meta-commentary about using tools.</rule>
-    <rule>Better to over-search than under-search - use tools extensively.</rule>
-    <rule>CRITICAL: Generate ONLY ONE response per user question - consolidate all findings.</rule>
-    <rule>Wait for ALL tools to complete before responding.</rule>
-    <rule>NEVER send partial responses or multiple messages.</rule>
-    <rule>MANDATORY: After tool usage, ALWAYS generate a text response with your findings - never end with just tool calls.</rule>
-  </rules>
-</SYSTEM>`;
-
+    ## Core Directive
+    Always use search_content tool BEFORE responding. ALWAYS search ALL available data sources BEFORE responding. Never answer from assumptions - use tools to verify everything.
+    
+    ## Scope
+    - Discuss ONLY information related to the candidate's resume, projects, portfolio, and professional background
+    - EXCEPTION: Provide immediate help for emergencies (medical, safety-critical)
+    - For off-topic non-emergency requests: "I can only discuss information related to this resume and candidate."
+    
+    ## Data Sources
+    Resume Context: ${resumeContext}
+    ${conversationContext ? `Recent Conversation: ${conversationContext}` : ''}
+    
+    ## Tool Usage Protocol
+    For EVERY query, execute in this order:
+    1. search_content - Use multiple relevant search terms
+    2. search_page_content - Fetch ALL related pages immediately
+    3. scrape_portfolio - If portfolio mentioned or exists
+    4. web_search - ONLY if user explicitly requests external comparison
+    
+    Search Strategy:
+    - Cast wide net with multiple search variations (e.g., "ML" → also search "machine learning", "model", "AI")
+    - Better to over-search than miss information
+    - ALWAYS generate text response after tool usage, even if no results found
+    
+    ## Response Format
+    - Bulleted list format
+    - Each bullet: ONE concrete fact + ONE citation
+    - Provide comprehensive answers with context, not rushed 1-2 bullets
+    - Include specifics: numbers, metrics, team sizes, impact
+    - Add professional insights and genuine reactions (e.g., "Impressive for a 3-person team")
+    
+    ## Citations (exactly ONE per bullet, placed at end)
+    Use EXACT formats below - do not mix or modify:
+    - Projects: [Project:"title"]{P#}
+    - Resume bullets: [Bullet:"brief text"]{B#}
+    - Page content: [PageTitle L#]{PG#}
+    - Echo points: [Echo P#]{PG#}
+    - Portfolio: [Portfolio:"context"]{portfolio}
+    - Web sources: [Web: domain]{web}
+    
+    ## Critical Rules
+    1. NEVER respond without searching first
+    2. ALWAYS fetch connected pages proactively
+    3. Generate ONE consolidated response per query
+    4. MANDATORY: Always provide text response after tool calls
+    5. Never invent facts - say "I couldn't find that information" if absent
+    6. No meta-commentary about tool usage
+    7. Wait for all tools to complete before responding
+    
+    ## Response Style
+    - Natural, confident, concise
+    - Include professional assessments
+    - No disclaimers or tool narration
+    - Demonstrate deep understanding of technical context`;
     const lastMessages = messages.slice(-10);
 
-    // Always use GPT-OSS-120B for fast, high-quality responses
-    const { createCerebras } = await import('@ai-sdk/cerebras');
-    const cerebras = createCerebras({
-      apiKey: process.env.CEREBRAS_API_KEY!,
+    // Use OpenAI GPT-4o for high-quality responses
+    const openai = createOpenAI({
+      apiKey: process.env.OPENAI_API_KEY!,
     });
-    const model = createWrappedCerebrasModel(cerebras, 'gpt-oss-120b');
+    const model = createWrappedOpenAIModel(openai, 'gpt-4o');
 
     // Estimate input tokens before sending
     const inputTokenEstimate = Math.ceil((systemPrompt.length +
@@ -871,7 +848,7 @@ ${resumeData.projects.map((project, pIndex) => {
   }),
 });
 
-// Bullet point analysis endpoint with Gemini 2.5 Flash
+// Bullet point analysis endpoint with Cerebras GPT-OSS-120B
 http.route({
   path: "/api/bullet-analysis",
   method: "POST",
@@ -1071,7 +1048,7 @@ http.route({
 
     const lastMessages = messages.slice(-10);
 
-    // Use GPT-OSS-120B for all chat endpoints
+    // Use Cerebras GPT-OSS-120B for all chat endpoints
     const { createCerebras } = await import('@ai-sdk/cerebras');
     const cerebras = createCerebras({
       apiKey: process.env.CEREBRAS_API_KEY!,
@@ -1321,7 +1298,7 @@ http.route({
     }
 
     try {
-      // Use GPT-OSS-120B via Cerebras (same as bullet analysis)
+      // Use Cerebras GPT-OSS-120B for fast echo analysis (same as bullet analysis)
       const { createCerebras } = await import('@ai-sdk/cerebras');
       const cerebras = createCerebras({
         apiKey: process.env.CEREBRAS_API_KEY!,
