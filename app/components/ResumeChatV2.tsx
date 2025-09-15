@@ -23,6 +23,7 @@ import {
 import { GlobeIcon, CopyIcon, RefreshCwIcon, Edit2Icon, CheckIcon, BotIcon, UserIcon, XIcon, SearchIcon, FileTextIcon, Globe2Icon, BrainCircuitIcon, ArrowUpIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CitationTooltip } from "@/components/ui/citation-tooltip";
+import { EchoCitationTooltip } from "@/components/ui/echo-citation-tooltip";
 import { parseCitations } from '@/lib/citation-parser';
 import { postProcessResponse } from '@/lib/response-formatter';
 import { IdMapping } from '@/types/chat';
@@ -111,6 +112,18 @@ function RichMessageContent({
       start: number;
       end: number;
     }>;
+    summary?: {
+      points: Array<{
+        text: string;
+        segmentReferences?: Array<{
+          segmentIndex: number;
+          start: number;
+          end: number;
+          originalText: string;
+        }>;
+      }>;
+      generatedAt: number;
+    };
   }>;
 }) {
   const { text, citations } = useMemo(() => {
@@ -161,8 +174,83 @@ function RichMessageContent({
       citationCounter++;
       const num = citationCounter;
 
-      // Add citation element - use PageCitation for pages, AudioCitation for audio
-      if (citation.type === 'audio') {
+      // Add citation element - use PageCitation for pages, Echo for echo
+      if (citation.type === 'echo' || citation.type === 'audio-summary') {
+        // Handle audio summary citations
+        const pointNumber = citation.timestamp; // Point number is stored in timestamp field
+
+        // Find the actual echo content from audioTranscriptions
+        let echoContent = undefined;
+        if (audioTranscriptions && pointNumber) {
+          // Get all transcriptions for this page
+          const pageTranscriptions = audioTranscriptions.filter(t => t.dynamicFileId === citation.convexId);
+
+          // Calculate which transcription and point within that transcription
+          let globalPointCounter = 0;
+          for (const trans of pageTranscriptions) {
+            if (trans.summary && trans.summary.points) {
+              for (const point of trans.summary.points) {
+                globalPointCounter++;
+                if (globalPointCounter === pointNumber) {
+                  echoContent = point.text;
+                  break;
+                }
+              }
+              if (echoContent) break;
+            }
+          }
+        }
+
+        // Use the found echo content, or fall back to fullText if provided
+        const tooltipContent = echoContent || citation.fullText;
+
+        parts.push(
+          <EchoCitationTooltip
+            key={`echo-${citation.simpleId}-${match.index}`}
+            pointNumber={pointNumber || 0}
+            content={tooltipContent}
+          >
+            <span
+              className="inline-flex items-center justify-center cursor-pointer ml-1 mr-0.5 px-1.5 min-w-[18px] h-[18px] rounded-md bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-[10px] font-medium text-neutral-700 dark:text-neutral-300 transition-all duration-200 hover:scale-105 align-baseline relative -top-[1px]"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onCitationClick) {
+                  // Navigate to the page
+                  onCitationClick('page', citation.convexId, citation.text);
+                  // After navigation, find and highlight the specific audio summary point
+                  setTimeout(() => {
+                    // Remove any existing persistent highlights first
+                    document.querySelectorAll('.highlight-persistent').forEach(el => {
+                      el.classList.remove('highlight-persistent');
+                    });
+
+                    // Find all echo elements on the page
+                    const summaryElements = document.querySelectorAll(`[id^="echo-point-"], [id^="audio-summary-point-"]`);
+
+                    // Look for the element with the matching point number
+                    summaryElements.forEach((element) => {
+                      const elementId = element.id;
+                      // Extract point number from ID (format: echo-point-{audioId}-{pointNumber} or audio-summary-point-{audioId}-{pointNumber})
+                      const match = elementId.match(/(?:echo|audio-summary)-point-.*-(\d+)$/);
+                      if (match && parseInt(match[1]) === pointNumber) {
+                        // Found the matching element
+                        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        // Add persistent highlight
+                        element.classList.add('highlight-persistent');
+                      }
+                    });
+                  }, 800); // Slightly longer delay to ensure page loads
+                }
+              }}
+              data-citation-type="echo"
+              data-citation-id={citation.simpleId}
+              data-point-number={pointNumber}
+            >
+              {num}
+            </span>
+          </EchoCitationTooltip>
+        );
+      } else if (citation.type === 'audio') {
         // Extract filename and timestamp from text
         const fileName = citation.audioFileName || citation.text.split(' T')[0];
         const timestamp = citation.timestamp || 0;
@@ -643,11 +731,28 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
     [resumeId, webSearch]
   );
 
-  const { messages, sendMessage, status, setMessages } = useChat({
+  const { messages, sendMessage, status, setMessages, error } = useChat({
     id: `chat-${webSearch}`, // Use id to separate chats by web search
     transport,
     messages: initialMessages,
+    onError: (error) => {
+      console.error('[CLIENT] useChat error:', error);
+      console.error('[CLIENT] Error stack:', error.stack);
+    },
+    onToolCall: async ({ toolCall }) => {
+      console.log('[CLIENT] Tool call received:', toolCall);
+    },
     onFinish: async ({ message }) => {
+      console.log('[CLIENT] Message finished:', {
+        messageId: message?.id,
+        messageLength: message?.parts?.reduce((acc, part) => {
+          if (part.type === 'text' && part.text) {
+            return acc + part.text.length;
+          }
+          return acc;
+        }, 0) || 0
+      });
+
       // Record end time when message finishes streaming
       if (message?.id) {
         setMessageMetrics(prev => ({
@@ -677,13 +782,25 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
   useEffect(() => {
     const lastMessage = messages[messages.length - 1];
     if (lastMessage?.role === 'assistant' && status === 'streaming' && !messageMetrics[lastMessage.id]?.startTime) {
+      console.log('[CLIENT] Starting to stream assistant message:', lastMessage.id);
       setMessageMetrics(prev => ({
         ...prev,
         [lastMessage.id]: { startTime: Date.now() }
       }));
     }
+
+    // Log status changes
+    console.log('[CLIENT] Chat status:', status, 'Messages count:', messages.length);
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.length, status]); // Only depend on messages.length and status, not messageMetrics
+
+  // Log errors if any
+  useEffect(() => {
+    if (error) {
+      console.error('[CLIENT] Chat error detected:', error);
+    }
+  }, [error]);
 
   // For now, we'll need to handle ID mapping extraction through a different approach
   // The backend will need to send the mapping as part of the streamed message
@@ -698,6 +815,7 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
     e.preventDefault();
     if (!input.trim()) return;
 
+    console.log('[CLIENT] Sending message:', input);
     // sendMessage handles message creation internally
     sendMessage({ text: input });
     setInput('');

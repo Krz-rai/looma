@@ -3,6 +3,8 @@
 import { Id } from "../../convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
 import { BulletPointExpandedModal } from "./BulletPointExpandedModal";
+import ShinyText from "@/components/ShinyText";
+import { useState } from "react";
 
 interface ExpandableBulletPointProps {
   bulletPoint: {
@@ -26,6 +28,7 @@ export function ExpandableBulletPoint({
   resumeId
 }: ExpandableBulletPointProps) {
   const isBulletHighlighted = highlightedItem?.type === 'bullet' && highlightedItem?.id === bulletPoint._id;
+  const [isHovered, setIsHovered] = useState(false);
 
   return (
     <div
@@ -43,18 +46,33 @@ export function ExpandableBulletPoint({
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <div className="text-[15px] leading-relaxed text-foreground relative">
-            <span>{bulletPoint.content}</span>
-            {/* Modal trigger inline after text */}
-            {connectedPageId && !isEditable && projectTitle && resumeId && (
-              <BulletPointExpandedModal
-                bulletPoint={bulletPoint}
-                projectTitle={projectTitle}
-                connectedPageId={connectedPageId}
-                resumeId={resumeId}
-              />
-            )}
-          </div>
+          {connectedPageId && !isEditable && projectTitle && resumeId ? (
+            <BulletPointExpandedModal
+              bulletPoint={bulletPoint}
+              projectTitle={projectTitle}
+              connectedPageId={connectedPageId}
+              resumeId={resumeId}
+            >
+              <div
+                className="cursor-pointer"
+                onMouseEnter={() => setIsHovered(true)}
+                onMouseLeave={() => setIsHovered(false)}
+              >
+                <ShinyText
+                  text=""
+                  disabled={!isHovered}
+                  speed={3}
+                  className="text-[15px] leading-relaxed text-foreground hover:text-primary transition-colors"
+                >
+                  {bulletPoint.content}
+                </ShinyText>
+              </div>
+            </BulletPointExpandedModal>
+          ) : (
+            <div className="text-[15px] leading-relaxed text-foreground">
+              {bulletPoint.content}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { convertToModelMessages, streamText, tool, UIMessage, stepCountIs, smoothStream, wrapLanguageModel, defaultSettingsMiddleware } from "ai";
+import { convertToModelMessages, streamText, generateText, tool, UIMessage, stepCountIs, smoothStream, wrapLanguageModel, defaultSettingsMiddleware } from "ai";
 import { httpRouter } from "convex/server";
 import { z } from "zod";
 import { api } from "./_generated/api";
@@ -92,7 +92,7 @@ const loggingMiddleware: LanguageModelV2Middleware = {
         }
         metrics.averageLatency = metrics.requestLatencies.reduce((a, b) => a + b, 0) / metrics.requestLatencies.length;
 
-        console.log('📊 Stream completed:', {
+        console.log('📊 [MIDDLEWARE-LOG-STREAM] Stream completed:', {
           totalTokens,
           latency: `${latency}ms`,
           avgLatency: `${Math.round(metrics.averageLatency)}ms`,
@@ -110,6 +110,7 @@ const loggingMiddleware: LanguageModelV2Middleware = {
 // Caching middleware - caches responses for identical requests
 const cachingMiddleware: LanguageModelV2Middleware = {
   wrapGenerate: async ({ doGenerate, params }) => {
+    console.log('🔄 [MIDDLEWARE-CACHE] Checking cache...');
     const cacheKey = JSON.stringify({
       prompt: params.prompt,
       temperature: params.temperature,
@@ -120,12 +121,14 @@ const cachingMiddleware: LanguageModelV2Middleware = {
     const cached = responseCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       metrics.cacheHits++;
-      console.log('✅ Cache hit for request');
+      console.log('✅ [MIDDLEWARE-CACHE] Cache hit for request');
       return cached.data;
     }
 
+    console.log('❌ [MIDDLEWARE-CACHE] Cache miss, generating...');
     metrics.cacheMisses++;
     const result = await doGenerate();
+    console.log('✅ [MIDDLEWARE-CACHE] Generation complete');
 
     // Store in cache
     responseCache.set(cacheKey, {
@@ -147,10 +150,12 @@ const cachingMiddleware: LanguageModelV2Middleware = {
 // Rate limiting middleware - prevents abuse
 const rateLimitMiddleware: LanguageModelV2Middleware = {
   transformParams: async ({ params }) => {
+    console.log('🚦 [MIDDLEWARE-RATE] Checking rate limits...');
     // Simple rate limit check (you'd want a more sophisticated approach in production)
     if (metrics.totalRequests > 1000 && metrics.averageLatency < 100) {
-      console.warn('⚠️ Rate limit warning: High request volume detected');
+      console.warn('⚠️ [MIDDLEWARE-RATE] Rate limit warning: High request volume detected');
     }
+    console.log('✅ [MIDDLEWARE-RATE] Rate limit check passed');
     return params;
   },
 };
@@ -181,6 +186,7 @@ const piiRedactionMiddleware: LanguageModelV2Middleware = {
   },
 
   wrapStream: async ({ doStream }) => {
+    console.log('🌊 [MIDDLEWARE-PII] Starting stream wrapper...');
     const { stream, ...rest } = await doStream();
 
     const transformStream = new TransformStream<
@@ -199,6 +205,7 @@ const piiRedactionMiddleware: LanguageModelV2Middleware = {
       },
     });
 
+    console.log('🌊 [MIDDLEWARE-PII] Stream wrapper configured');
     return {
       stream: stream.pipeThrough(transformStream),
       ...rest,
@@ -218,7 +225,7 @@ const piiRedactionMiddleware: LanguageModelV2Middleware = {
 const defaultSettings = defaultSettingsMiddleware({
   settings: {
     temperature: 0.3,
-    maxOutputTokens: 2000,
+    maxOutputTokens: 20000,
   },
 });
 
@@ -234,7 +241,9 @@ const allMiddleware = [
 
 // Helper function to create wrapped Cerebras model
 function createWrappedCerebrasModel(cerebras: any, modelName: string = 'gpt-oss-120b') {
-  console.log(`🚀 Creating wrapped Cerebras ${modelName} with middleware`);
+  console.log(`🚀 [MODEL] Creating wrapped Cerebras ${modelName} with middleware`);
+  console.log(`🔧 [MODEL] Middleware count: ${allMiddleware.length}`);
+  console.log(`🔧 [MODEL] Middleware names: defaultSettings, logging, caching, rateLimit, piiRedaction`);
   return wrapLanguageModel({
     model: cerebras(modelName),
     middleware: allMiddleware,
@@ -451,14 +460,19 @@ ${resumeData.projects.map((project, pIndex) => {
     // System prompt using XML-based instructions from instructions.xml
     const systemPrompt = `<SYSTEM role="Aurea" version="1.0">
   <scope>
-    Discuss anything related to this candidate found in their resume, projects, pages, audio notes, and portfolio - including personal traits, characteristics, statements, and claims they make.
-    Only decline truly off-topic requests unrelated to the candidate (e.g., cooking recipes, weather, general programming tutorials).
-    For off-topic requests, respond: "I can only discuss information related to this resume and candidate."
+    Discuss anything related to this candidate found in their resume, projects, pages, echoes, and portfolio - including personal traits, characteristics, statements, and claims they make.
+    EXCEPTION: Always provide help for emergency situations, medical emergencies, or safety-critical information when requested.
+    Only decline truly off-topic requests unrelated to the candidate (e.g., cooking recipes, weather, general programming tutorials) unless they are emergencies.
+    For non-emergency off-topic requests, respond: "I can only discuss information related to this resume and candidate."
+    For emergency requests, provide the needed information immediately (e.g., "Emergency services in the US: Call 911").
   </scope>
 
   <objectives>
-    Provide 2–5 concise bullets highlighting concrete achievements, metrics, scale, reliability, and business impact.
-    Prefer specifics (numbers, throughput, latency, savings, team size) over generalities.
+    ALWAYS search through ALL available data first - resume, all pages, portfolio, echoes - to gather complete context before responding.
+    Provide thorough, moderate-length responses that fully address the user's question. Don't rush answers into 1-2 bullets.
+    Include relevant details, context, and explanations. Give complete answers that demonstrate deep understanding of the candidate's work.
+    When discussing technical topics, explain the approach, implementation, and impact comprehensively.
+    Prefer specifics (numbers, throughput, latency, savings, team size) but also provide context around these metrics.
   </objectives>
 
   <data>
@@ -467,11 +481,27 @@ ${resumeData.projects.map((project, pIndex) => {
     ${conversationContext ? `<recent_conversation>${conversationContext}</recent_conversation>` : ''}
   </data>
 
-  <tools use="silently">
-    <tool name="search_content">Find exact quotes in pages and audio.</tool>
-    <tool name="search_page_content">Fetch a page by title or ID when details about a project/page are requested.</tool>
+  <tools use="proactively">
+    <tool name="search_content">ALWAYS use FIRST and EXTENSIVELY to find ALL relevant information across resume, pages, and echoes.</tool>
+    <tool name="search_page_content">IMMEDIATELY fetch ALL relevant pages - don't wait. Search broadly to ensure complete context.</tool>
     <tool name="scrape_portfolio">Use when a portfolio URL is present or asked about.</tool>
     <tool name="web_search">Use only if the user explicitly asks to compare with public sources.</tool>
+    <proactive_rule>
+      CRITICAL: For EVERY user question, no matter how simple:
+      1. FIRST search extensively using search_content with multiple relevant terms
+      2. Fetch ALL related pages using search_page_content - cast a wide net
+      3. Search for variations of terms (e.g., if asked about "ML", also search "machine learning", "model", "training")
+      4. Check echoes, portfolio, and all project documentation
+      5. Only after gathering ALL available information, formulate a complete response
+      6. Your response should reflect the FULL depth of available information
+      7. Don't summarize prematurely - provide comprehensive answers
+
+      CRITICAL - TEXT GENERATION REQUIREMENT:
+      After using ANY tools (search_content, search_page_content, etc.), you MUST ALWAYS generate a text response.
+      Never end your output with only tool calls - always follow with your analysis and findings.
+      Even if searches return no results, explain what you searched for and what wasn't found.
+      The user expects a response after every query - tool usage alone is not sufficient.
+    </proactive_rule>
   </tools>
 
   <citations>
@@ -479,10 +509,11 @@ ${resumeData.projects.map((project, pIndex) => {
     <format type="project">[Project:"title"]{P#}</format>
     <format type="bullet">[Bullet:"brief text"]{B#}</format>
     <format type="branch">[Branch:"brief text"]{BR#}</format>
-    <format type="page-line">[Title L#]{PG#}</format>
-    <format type="audio">[Audio:"file T#s"]{PG#:filename}</format>
+    <format type="page-line">[Title L#]{PG#} - ONLY for non-echo content</format>
+    <format type="echo">[Echo P#]{PG#} - REQUIRED when citing echo points</format>
     <format type="portfolio">[Portfolio:"short context"]{portfolio}</format>
     <format type="web">[Web: domain]{web}</format>
+
   </citations>
 
   <output>
@@ -497,12 +528,17 @@ ${resumeData.projects.map((project, pIndex) => {
   </reasoning>
 
   <rules>
+    <rule>CRITICAL: Always use search_page_content PROACTIVELY - don't wait to be asked for details.</rule>
+    <rule>When you see a project with a connected page in the resume context, IMMEDIATELY fetch that page.</rule>
+    <rule>Use search_content liberally to find specific information - search for multiple terms.</rule>
     <rule>Do not invent unsupported facts—use tools to verify before asserting.</rule>
     <rule>If a requested fact is absent in the provided data/tools, say you can't find it.</rule>
     <rule>No preambles, no meta-commentary about using tools.</rule>
+    <rule>Better to over-search than under-search - use tools extensively.</rule>
     <rule>CRITICAL: Generate ONLY ONE response per user question - consolidate all findings.</rule>
     <rule>Wait for ALL tools to complete before responding.</rule>
     <rule>NEVER send partial responses or multiple messages.</rule>
+    <rule>MANDATORY: After tool usage, ALWAYS generate a text response with your findings - never end with just tool calls.</rule>
   </rules>
 </SYSTEM>`;
 
@@ -590,33 +626,41 @@ ${resumeData.projects.map((project, pIndex) => {
 
       // Add content search tool for finding specific text
       tools.search_content = tool({
-        description: "Search for specific text, quotes, or phrases within all pages and audio transcriptions. Use this when looking for exact statements, quotes, or specific information.",
+        description: "Search for specific text, quotes, or phrases within all pages and echoes. Use this when looking for exact statements, quotes, or specific information.",
         inputSchema: z.object({
           query: z.string().describe("The text to search for (e.g., 'overdramatic', 'fraud detection', 'accuracy')"),
-          searchIn: z.enum(["all", "pages", "audio"]).optional().default("all").describe("Where to search: all content, only pages, or only audio"),
+          searchIn: z.enum(["all", "pages", "echoes"]).optional().default("all").describe("Where to search: all content, only pages, or only echoes"),
           limit: z.number().optional().default(5).describe("Maximum number of results to return"),
         }),
         execute: async ({ query, searchIn = "all", limit = 5 }) => {
-          console.log(`🔎 Searching content for: "${query}" in ${searchIn}`);
+          console.log(`🔎 [TOOL START] Searching content for: "${query}" in ${searchIn}`);
+          console.log(`📋 [TOOL] Parameters: query="${query}", searchIn="${searchIn}", limit=${limit}`);
+          console.log(`🆔 [TOOL] Resume ID: ${resumeId}`);
 
-          const searchResult = await ctx.runQuery(api.contentSearch.searchContent, {
-            resumeId,
-            searchQuery: query,
-            includePages: searchIn === "all" || searchIn === "pages",
-            includeAudio: searchIn === "all" || searchIn === "audio",
-            limit,
-          });
+          try {
+            console.log(`🔄 [TOOL] Calling ctx.runQuery...`);
+            const searchResult = await ctx.runQuery(api.contentSearch.searchContent, {
+              resumeId,
+              searchQuery: query,
+              includePages: searchIn === "all" || searchIn === "pages",
+              includeAudio: searchIn === "all" || searchIn === "echoes",
+              limit,
+            });
+            console.log(`✅ [TOOL] Query completed, got result:`, JSON.stringify(searchResult, null, 2).slice(0, 500));
 
           if (searchResult.results.length === 0) {
-            console.log(`❌ No results found for "${query}"`);
-            return {
+            console.log(`❌ [TOOL] No results found for "${query}"`);
+            const emptyResponse = {
               success: false,
               message: `No matches found for "${query}"`,
               results: [],
             };
+            console.log(`🔚 [TOOL] Returning empty response:`, emptyResponse);
+            return emptyResponse;
           }
 
-          console.log(`✅ Found ${searchResult.results.length} results for "${query}"`);
+          console.log(`✅ [TOOL] Found ${searchResult.results.length} results for "${query}"`);
+          console.log(`📊 [TOOL] Processing results...`);
 
           // Format results for AI consumption
           const formattedResults = searchResult.results.map((result: any) => {
@@ -631,26 +675,44 @@ ${resumeData.projects.map((project, pIndex) => {
                 context: result.context,
                 citation: `[${result.pageTitle} L${result.lineNumber}]{${pageSimpleId}}`,
               };
-            } else if (result.type === 'audio') {
+            } else if (result.type === 'echo') {
               const pageSimpleId = idMap.forward[result.pageId] || result.pageId;
+              const pointNumber = result.globalPointNumber || 1;
+
+              // Simple citation format without embedded text
+              const citation = `[Echo P${pointNumber}]{${pageSimpleId}}`;
+
               return {
-                type: 'audio',
-                fileName: result.fileName,
+                type: 'echo',
+                fileName: result.displayName || result.fileName,
                 pageTitle: result.pageTitle,
                 timestamp: result.timestamp,
                 matchedText: result.matchedText,
-                citation: `[Audio:"${result.fileName} T${result.timestamp}s"]{${pageSimpleId}:${result.fileName}}`,
+                citation: citation,
+                note: `This is echo point ${pointNumber} from "${result.pageTitle}" page`,
               };
             }
             return result;
           });
 
-          return {
+          const finalResponse = {
             success: true,
             query: searchResult.query,
             totalFound: searchResult.totalFound,
             results: formattedResults,
           };
+          console.log(`✨ [TOOL] Final response prepared, ${formattedResults.length} formatted results`);
+          console.log(`📤 [TOOL] Returning response:`, JSON.stringify(finalResponse, null, 2).slice(0, 500));
+          return finalResponse;
+          } catch (error) {
+            console.error(`💥 [TOOL] Error in search_content:`, error);
+            console.error(`🔍 [TOOL] Error stack:`, error instanceof Error ? error.stack : 'No stack');
+            return {
+              success: false,
+              message: `Error during search: ${error instanceof Error ? error.message : String(error)}`,
+              results: [],
+            };
+          }
         },
       });
 
@@ -696,16 +758,16 @@ ${resumeData.projects.map((project, pIndex) => {
               `[L${i+1}] ${line}`
             ).join('\n');
 
-            // Get audio transcription info from the page if available
+            // Get echo info from the page if available
             let audioInfo = '';
             if (pageResult.page.transcriptions && pageResult.page.transcriptions.length > 0) {
               const pageSimpleId = idMap.forward[pageResult.page.id] || pageResult.page.id;
-              audioInfo = '\n\nAUDIO TRANSCRIPTIONS IN THIS PAGE:\n';
+              audioInfo = '\n\nECHOES IN THIS PAGE:\n';
               pageResult.page.transcriptions.forEach((t: any) => {
-                audioInfo += `- "${t.fileName}" - Duration: ${t.duration ? Math.round(t.duration) + 's' : 'unknown'}\n`;
-                audioInfo += `  To cite segments from this audio, use: [Audio:"${t.fileName} T<seconds>s"]{${pageSimpleId}:${t.fileName}}\n`;
+                audioInfo += `- "${t.displayName || t.fileName}" - Duration: ${t.duration ? Math.round(t.duration) + 's' : 'unknown'}\n`;
               });
-              audioInfo += '\nNote: Audio transcriptions are included in the page content above. Look for [Audio Transcription] markers and [TS<n>:<seconds>s] timestamps.\n';
+              audioInfo += '\nNote: Echoes are included in the page content above. Look for [Echo P#] markers to cite them.\n';
+              audioInfo += 'Use format: [Echo P#]{' + pageSimpleId + '} where P# matches the echo point number.\n';
             }
 
             const responseObject = {
@@ -732,6 +794,11 @@ ${resumeData.projects.map((project, pIndex) => {
     }
 
     // Always stream responses for consistent handling
+    console.log(`🎯 [STREAM] Starting streamText with ${Object.keys(tools).length} tools available`);
+    console.log(`🛠️ [STREAM] Tool names: ${Object.keys(tools).join(', ')}`);
+    console.log(`📝 [STREAM] Last message role:`, lastMessages[lastMessages.length - 1]?.role);
+    console.log(`📝 [STREAM] Last message content:`, JSON.stringify(lastMessages[lastMessages.length - 1]?.parts).slice(0, 200));
+
     const result = streamText({
       model,
       system: systemPrompt,
@@ -739,7 +806,7 @@ ${resumeData.projects.map((project, pIndex) => {
       // Only require tools if they exist, otherwise let model choose
       toolChoice: 'auto',
       temperature: 0.3,
-      stopWhen: stepCountIs(10),
+      stopWhen: stepCountIs(20),
       // Pass the tools object (may be empty)
       tools: Object.keys(tools).length > 0 ? tools : undefined,
       // Add smooth streaming for better UX
@@ -747,23 +814,48 @@ ${resumeData.projects.map((project, pIndex) => {
         delayInMs: 15,  // Slightly faster than default for snappy feel
         chunking: 'word' // Word-by-word streaming for natural reading
       }),
-    onError(error) {
-      console.error("streamText error:", error);
+    onError({ error }) {
+      console.error("💥 [STREAM] streamText error:", error);
+      console.error("🔍 [STREAM] Error details:", JSON.stringify(error, null, 2));
+      if (error instanceof Error) {
+        console.error("🔴 [STREAM] Error name:", error.name);
+        console.error("🔴 [STREAM] Error message:", error.message);
+        console.error("🔴 [STREAM] Error stack:", error.stack);
+      }
     },
     onFinish(event) {
-      console.log('🤖 AI Response:', event.text);
+      console.log('🤖 [STREAM] AI Response:', event.text || '[EMPTY RESPONSE]');
+      console.log('📝 [STREAM] Response length:', event.text?.length || 0);
       // ID mapping is sent via headers instead
-      console.log('Stream finished, ID mappings sent via X-ID-Mapping header');
+      console.log('✅ [STREAM] Stream finished, ID mappings sent via X-ID-Mapping header');
 
       // Log token usage for debugging
-      if (event.usage) {
-        console.log('📈 Token usage:', event.usage);
-        console.log(`📊 Input token estimate: ~${inputTokenEstimate} tokens`);
+      console.log('📈 [STREAM] Token usage:', {
+        inputTokens: event.usage?.inputTokens || 'undefined',
+        outputTokens: event.usage?.outputTokens || 'undefined',
+        totalTokens: event.usage?.totalTokens || 'undefined',
+        reasoningTokens: event.usage?.reasoningTokens || 'undefined',
+        cachedInputTokens: event.usage?.cachedInputTokens || 'undefined'
+      });
+      console.log(`📊 [STREAM] Input token estimate: ~${inputTokenEstimate} tokens`);
+
+      // Log tool calls if any
+      if (event.toolCalls && event.toolCalls.length > 0) {
+        console.log(`🔧 [STREAM] Tool calls made: ${event.toolCalls.length}`);
+        event.toolCalls.forEach((call: any, i: number) => {
+          console.log(`  Tool ${i+1}: ${call.toolName} - Args: ${JSON.stringify(call.args).slice(0, 100)}`);
+        });
+      } else {
+        console.log('🔧 [STREAM] No tool calls made');
       }
     },
   });
 
     // Following convex-aisdk-rag pattern - simple response
+    console.log('📡 [RESPONSE] Converting to UIMessageStreamResponse...');
+    console.log('🎯 [RESPONSE] Result object exists:', result ? 'YES' : 'NO');
+    console.log('🎯 [RESPONSE] Result type:', typeof result);
+
     const response = result.toUIMessageStreamResponse({
       headers: new Headers({
         "Access-Control-Allow-Origin": "*",
@@ -773,6 +865,8 @@ ${resumeData.projects.map((project, pIndex) => {
       }),
     });
 
+    console.log('🚀 [RESPONSE] Sending response back to client');
+    console.log('📊 [RESPONSE] Response object:', response ? 'Created' : 'NULL');
     return response;
   }),
 });
@@ -876,7 +970,6 @@ Output exactly 4 concise blocks:
 [CITATION] ${pageTitle || 'Doc'} | [brief quote]
 
 Be extremely concise. No full sentences needed.`;
-
     // Use Cerebras GPT-OSS-120B for faster inference
     const { createCerebras } = await import('@ai-sdk/cerebras');
     const cerebras = createCerebras({
@@ -905,43 +998,61 @@ Be extremely concise. No full sentences needed.`;
       throw new Error("No prompt or messages provided");
     }
 
-    const result = streamText({
-      model,
-      system: systemPrompt,
-      messages: messagesToUse,
-      temperature: 0.1,
-      maxOutputTokens: 500,  // Concise for bullet analysis
-      stopWhen: stepCountIs(1),
-      // Add smooth streaming for better UX
-      experimental_transform: smoothStream({
-        delayInMs: 10,  // Fast streaming for quick analysis
-        chunking: 'word'
-      }),
-      onError(error) {
-        console.error("Bullet analysis error:", error);
-      },
-      onFinish({ usage }) {
-        if (usage) {
-          console.log('📈 Bullet analysis token usage:', usage);
-        }
-      },
-    });
-
-    // Return appropriate response format
-    if (prompt) {
-      // For useCompletion - return UIMessage stream (data protocol)
-      // This works because useCompletion can parse the data stream protocol
-      return result.toUIMessageStreamResponse({
-        headers: new Headers({
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
+    try {
+      const result = streamText({
+        model,
+        system: systemPrompt,
+        messages: messagesToUse,
+        temperature: 0.5,
+        maxOutputTokens: 5000,  // Concise for bullet analysis
+        stopWhen: stepCountIs(10),
+        // Add smooth streaming for better UX
+        experimental_transform: smoothStream({
+          delayInMs: 10,  // Slightly faster for snappy feel
+          chunking: 'word'
         }),
+        onError(error) {
+          console.error("Bullet analysis error:", error);
+        },
+        onFinish({ usage }) {
+          if (usage) {
+            console.log('📈 Bullet analysis token usage:', usage);
+          }
+        },
       });
-    } else {
-      // For useChat - return UIMessage stream
-      return result.toUIMessageStreamResponse({
+
+      // Return appropriate response format
+      if (prompt) {
+        // For useCompletion - return UIMessage stream (data protocol)
+        // This works because useCompletion can parse the data stream protocol
+        return result.toUIMessageStreamResponse({
+          headers: new Headers({
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+          }),
+        });
+      } else {
+        // For useChat - return UIMessage stream
+        return result.toUIMessageStreamResponse({
+          headers: new Headers({
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+          }),
+        });
+      }
+    } catch (error) {
+      console.error('❌ Cerebras API error, returning graceful fallback:', error);
+      // Return a simple fallback response when API fails
+      const fallbackResponse = `[AI] Analysis temporarily unavailable
+[CITATION] ${pageTitle || 'Doc'} | Please try again
+[AI] Service will resume shortly
+[CITATION] ${pageTitle || 'Doc'} | Thank you for your patience`;
+
+      return new Response(fallbackResponse, {
         headers: new Headers({
+          "Content-Type": "text/plain",
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "POST, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type",
@@ -1158,6 +1269,203 @@ http.route({
       headers: new Headers({
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
+      }),
+    });
+  }),
+});
+
+// Echo analysis endpoint - using same pattern as bullet analysis
+http.route({
+  path: "/api/echo-analysis",
+  method: "POST",
+  handler: httpAction(async (ctx, req) => {
+    const body = await req.json();
+    console.log('🎵 Echo analysis request:', JSON.stringify(body, null, 2));
+
+    const { prompt, messages, transcriptionId, summaryPoint, segmentReferences } = body as {
+      prompt?: string; // From useCompletion
+      messages?: UIMessage[]; // From useChat (backwards compatibility)
+      transcriptionId: Id<"audioTranscriptions">;
+      summaryPoint: string;
+      segmentReferences: Array<{
+        segmentIndex: number;
+        start: number;
+        end: number;
+        originalText: string;
+      }>;
+    };
+
+    if (!transcriptionId) {
+      return new Response(JSON.stringify({ error: "transcriptionId is required" }), {
+        status: 400,
+        headers: new Headers({
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        }),
+      });
+    }
+
+    // Get the full transcription
+    const transcription = await ctx.runQuery(api.audioTranscription.get, {
+      id: transcriptionId
+    });
+
+    if (!transcription) {
+      return new Response(JSON.stringify({ error: "Transcription not found" }), {
+        status: 404,
+        headers: new Headers({
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        }),
+      });
+    }
+
+    try {
+      // Use GPT-OSS-120B via Cerebras (same as bullet analysis)
+      const { createCerebras } = await import('@ai-sdk/cerebras');
+      const cerebras = createCerebras({
+        apiKey: process.env.CEREBRAS_API_KEY!,
+      });
+      const model = createWrappedCerebrasModel(cerebras, 'gpt-oss-120b');
+      console.log('⚡ Using wrapped Cerebras GPT-OSS-120B for fast echo analysis');
+
+      // Create context from segment references
+      const sourceContext = segmentReferences.map((ref, index) =>
+        `Source ${index + 1} [${Math.floor(ref.start / 60)}:${String(Math.floor(ref.start % 60)).padStart(2, '0')}]: "${ref.originalText}"`
+      ).join('\n');
+
+      // Generate AI analysis with alternating context and sources
+      const systemPrompt = `You are analyzing an echo point and its source segments.
+
+Echo Point: "${summaryPoint}"
+
+Source Segments:
+${sourceContext}
+
+Full Transcription Context (for understanding only):
+${transcription.transcription.substring(0, 2000)}...
+
+Create an analysis with alternating AI context and source citations. Format your response EXACTLY as:
+
+[AI] Provide contextual analysis about what this summary point means
+[SOURCE] ${Math.floor(segmentReferences[0]?.start / 60 || 0)}:${String(Math.floor(segmentReferences[0]?.start % 60 || 0)).padStart(2, '0')} | ${segmentReferences[0]?.originalText || ''}
+[AI] Add deeper insight or connection to broader themes
+${segmentReferences[1] ? `[SOURCE] ${Math.floor(segmentReferences[1].start / 60)}:${String(Math.floor(segmentReferences[1].start % 60)).padStart(2, '0')} | ${segmentReferences[1].originalText}` : ''}
+[AI] Conclude with the significance or implications
+
+Rules:
+- ALWAYS use "He" or "She" based on the speaker's voice/context (NEVER use "The speaker")
+- Start each AI insight with [AI]
+- Start each source with [SOURCE] timestamp | text
+- Keep AI insights concise and meaningful
+- Always alternate between AI and SOURCE
+- Use the exact source text provided
+- Maintain consistent pronoun usage throughout (He/She based on context)`;
+
+      // Handle both formats (same as bullet analysis)
+      let messagesToUse;
+      if (prompt) {
+        // useCompletion format - create a single user message
+        const userMessage: UIMessage = {
+          id: crypto.randomUUID(),
+          role: 'user',
+          parts: [{
+            type: 'text',
+            text: prompt
+          }]
+        };
+        messagesToUse = convertToModelMessages([userMessage]);
+      } else if (messages && messages.length > 0) {
+        // useChat format - use existing messages
+        messagesToUse = convertToModelMessages(messages.slice(-10));
+      } else {
+        throw new Error("No prompt or messages provided");
+      }
+
+      // Stream text with exact same setup as bullet analysis
+      try {
+        const result = streamText({
+          model,
+          system: systemPrompt,
+          messages: messagesToUse,
+          temperature: 0.4,
+          maxOutputTokens: 5000,
+          stopWhen: stepCountIs(10),
+          // Add smooth streaming for better UX
+          experimental_transform: smoothStream({
+            delayInMs: 10,  // Fast streaming for quick analysis
+            chunking: 'word'
+          }),
+          onError(error) {
+            console.error("Audio analysis error:", error);
+          },
+          onFinish({ usage }) {
+            if (usage) {
+              console.log('📈 Audio analysis token usage:', usage);
+            }
+          },
+        });
+
+        // Return appropriate response format (same as bullet analysis)
+        if (prompt) {
+          // For useCompletion - return UIMessage stream (data protocol)
+          return result.toUIMessageStreamResponse({
+            headers: new Headers({
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Methods": "POST, OPTIONS",
+              "Access-Control-Allow-Headers": "Content-Type",
+            }),
+          });
+        } else {
+          // For useChat - return UIMessage stream
+          return result.toUIMessageStreamResponse({
+            headers: new Headers({
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Methods": "POST, OPTIONS",
+              "Access-Control-Allow-Headers": "Content-Type",
+            }),
+          });
+        }
+      } catch (streamError) {
+        console.error('❌ Cerebras API error in audio analysis, returning fallback:', streamError);
+        // Return a simple fallback with the sources
+        const fallbackText = segmentReferences.map((ref) =>
+          `[SOURCE] ${Math.floor(ref.start / 60)}:${String(Math.floor(ref.start % 60)).padStart(2, '0')} | ${ref.originalText}`
+        ).join('\n');
+
+        return new Response(fallbackText, {
+          headers: new Headers({
+            "Content-Type": "text/plain",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+          }),
+        });
+      }
+    } catch (error) {
+      console.error('❌ Audio analysis error:', error);
+      return new Response(JSON.stringify({ error: "Analysis generation failed" }), {
+        status: 500,
+        headers: new Headers({
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        }),
+      });
+    }
+  }),
+});
+
+// OPTIONS handler for echo-analysis
+http.route({
+  path: "/api/echo-analysis",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      headers: new Headers({
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Max-Age": "86400",
       }),
     });
   }),

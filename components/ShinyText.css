@@ -1,0 +1,54 @@
+/* Shiny text container */
+.shiny-text-container {
+  position: relative;
+  display: inline-block;
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+
+/* Active shimmer state */
+.shiny-text-active {
+  background: linear-gradient(
+    105deg,
+    currentColor 0%,
+    currentColor 30%,
+    rgba(59, 130, 246, 1) 40%,
+    rgba(147, 197, 253, 1) 50%,
+    rgba(59, 130, 246, 1) 60%,
+    currentColor 70%,
+    currentColor 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: text-shimmer var(--shimmer-duration, 3s) ease-out forwards;
+}
+
+/* Dark mode adjustments - brighter for visibility */
+.dark .shiny-text-active {
+  background: linear-gradient(
+    105deg,
+    currentColor 0%,
+    currentColor 30%,
+    rgba(96, 165, 250, 1) 40%,
+    rgba(191, 219, 254, 1) 50%,
+    rgba(96, 165, 250, 1) 60%,
+    currentColor 70%,
+    currentColor 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Shimmer animation - runs once */
+@keyframes text-shimmer {
+  0% {
+    background-position: 200% center;
+  }
+  100% {
+    background-position: -200% center;
+  }
+}

@@ -30,7 +30,7 @@ export const searchContent = query({
     resumeId: v.id("resumes"),
     searchQuery: v.string(),
     includePages: v.boolean(),
-    includeAudio: v.boolean(),
+    includeAudio: v.boolean(), // Actually searching echoes
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -38,7 +38,7 @@ export const searchContent = query({
     const searchLower = args.searchQuery.toLowerCase();
     const limit = args.limit || 10;
 
-    console.log(`🔍 Searching for "${args.searchQuery}" in pages=${args.includePages}, audio=${args.includeAudio}`);
+    console.log(`🔍 Searching for "${args.searchQuery}" in pages=${args.includePages}, echoes=${args.includeAudio}`);
 
     if (args.includePages) {
       // Get all public pages for this resume
@@ -104,7 +104,7 @@ export const searchContent = query({
     }
 
     if (args.includeAudio) {
-      // Get all pages with audio transcriptions
+      // Get all pages with echoes
       const pages = await ctx.db
         .query("dynamicFiles")
         .withIndex("by_resume", q => q.eq("resumeId", args.resumeId))
@@ -114,55 +114,50 @@ export const searchContent = query({
       for (const page of pages) {
         if (results.length >= limit) break;
 
-        // Get audio transcriptions for this page
+        // Get echoes for this page
         const transcriptions = await ctx.db
           .query("audioTranscriptions")
           .withIndex("by_dynamic_file", q => q.eq("dynamicFileId", page._id))
           .filter(q => q.eq(q.field("status"), "completed"))
           .collect();
 
-        console.log(`🎵 Searching ${transcriptions.length} audio transcriptions for page "${page.title}"`);
+        console.log(`🎵 Searching ${transcriptions.length} echoes for page "${page.title}"`);
+
+        // Track global point number across all transcriptions for this page
+        let globalPointNumber = 0;
 
         for (const trans of transcriptions) {
           if (results.length >= limit) break;
 
-          // Search in full transcription first
-          const fullTextLower = trans.transcription.toLowerCase();
-          if (fullTextLower.includes(searchLower)) {
-            // If we have segments, find the exact segment
-            if (trans.segments && trans.segments.length > 0) {
-              for (const segment of trans.segments) {
-                if (segment.text.toLowerCase().includes(searchLower)) {
-                  results.push({
-                    type: 'audio',
-                    transcriptionId: trans._id,
-                    fileName: trans.fileName,
-                    timestamp: segment.start,
-                    matchedText: segment.text.trim(),
-                    pageId: page._id,
-                    pageTitle: page.title,
-                    duration: trans.duration,
-                  });
+          // Only search in the summary points, not the full transcription
+          if (trans.summary && trans.summary.points) {
+            for (let i = 0; i < trans.summary.points.length; i++) {
+              globalPointNumber++; // Increment for each point
+              const point = trans.summary.points[i];
+              const pointTextLower = point.text.toLowerCase();
 
-                  console.log(`✅ Found in audio "${trans.fileName}" at ${segment.start}s`);
-                  break; // Only add first matching segment per transcription
-                }
+              if (pointTextLower.includes(searchLower)) {
+                results.push({
+                  type: 'echo',
+                  transcriptionId: trans._id,
+                  fileName: trans.fileName,
+                  displayName: trans.displayName,
+                  timestamp: 0, // Summary points don't have timestamps
+                  matchedText: point.text.trim(),
+                  pageId: page._id,
+                  pageTitle: page.title,
+                  duration: trans.duration,
+                  summaryPointIndex: i,
+                  globalPointNumber: globalPointNumber, // Add the global point number
+                });
+
+                console.log(`✅ Found in echo "${trans.displayName || trans.fileName}" at global point ${globalPointNumber} (local point ${i + 1})`);
+                break; // Only add first matching summary point per transcription
               }
-            } else {
-              // No segments, just report the transcription match
-              results.push({
-                type: 'audio',
-                transcriptionId: trans._id,
-                fileName: trans.fileName,
-                timestamp: 0,
-                matchedText: trans.transcription.substring(0, 200) + '...',
-                pageId: page._id,
-                pageTitle: page.title,
-                duration: trans.duration,
-              });
-
-              console.log(`✅ Found in audio "${trans.fileName}" (no segments)`);
             }
+          } else {
+            // Even if no summary, we still need to track that this transcription exists
+            // (though we won't search in it since there's no summary)
           }
         }
       }

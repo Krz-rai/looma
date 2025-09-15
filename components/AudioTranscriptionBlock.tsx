@@ -1,14 +1,15 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef } from "react";
 import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { Id } from "../convex/_generated/dataModel";
-import { Upload, Mic, Loader2, Play, Pause, Trash2, Clock } from "lucide-react";
+import { Upload, AudioLines, Loader2, Trash2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
 import { Progress } from "./ui/progress";
 import { cn } from "../lib/utils";
+import { AudioTranscriptionSummary } from "./AudioTranscriptionSummary";
 
 interface AudioTranscriptionBlockProps {
   dynamicFileId: Id<"dynamicFiles">;
@@ -19,26 +20,12 @@ interface AudioTranscriptionBlockProps {
   };
 }
 
-// TranscriptionItem interface removed - using inline types from Convex query
 
-// Helper function to format seconds to MM:SS
-const formatTimestamp = (seconds: number): string => {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-};
-
-export function AudioTranscriptionBlock({ dynamicFileId, isReadOnly = false, autoPlayRequest }: AudioTranscriptionBlockProps) {
+export function AudioTranscriptionBlock({ dynamicFileId, isReadOnly = false }: AudioTranscriptionBlockProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
-  const [playingAudio, setPlayingAudio] = useState<string | null>(null);
-  const showTimestamps = true; // Always show timestamps
-  const [expandedTranscriptions, setExpandedTranscriptions] = useState<Set<string>>(new Set()); // Track which transcriptions are expanded
-  const [currentTime, setCurrentTime] = useState<{ [key: string]: number }>({});
-  const [hasProcessedAutoPlay, setHasProcessedAutoPlay] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
 
   // Mutations and Actions
   const generateUploadUrl = useMutation(api.audioTranscription.generateAudioUploadUrl);
@@ -51,100 +38,31 @@ export function AudioTranscriptionBlock({ dynamicFileId, isReadOnly = false, aut
     dynamicFileId,
   });
 
-  // Handle auto-play request from parent
-  useEffect(() => {
-    if (autoPlayRequest && transcriptions && !hasProcessedAutoPlay) {
-      // Find the transcription with matching filename
-      const transcription = transcriptions.find(t =>
-        t.fileName === autoPlayRequest.fileName &&
-        t.status === 'completed' &&
-        t.audioUrl
-      );
-
-      if (transcription) {
-        console.log('🎵 Auto-playing audio:', autoPlayRequest);
-        // Trigger playback at the specified timestamp
-        toggleAudioPlayback(transcription._id, transcription.audioUrl || undefined, autoPlayRequest.timestamp).catch(console.log);
-
-        // Mark as processed to prevent re-triggering
-        setHasProcessedAutoPlay(true);
-
-        // Expand this transcription
-        setExpandedTranscriptions(prev => new Set(prev).add(transcription._id));
-
-        // Scroll to the specific segment being played
-        setTimeout(() => {
-          // Find the segment that contains the timestamp
-          let targetSegmentStart = 0;
-          if (transcription.segments) {
-            for (const segment of transcription.segments) {
-              if (autoPlayRequest.timestamp >= segment.start && autoPlayRequest.timestamp <= segment.end) {
-                targetSegmentStart = segment.start;
-                break;
-              }
-              // Also check if timestamp exactly matches start
-              if (autoPlayRequest.timestamp === segment.start) {
-                targetSegmentStart = segment.start;
-                break;
-              }
-            }
-          }
-
-          // Find the segment element with the matching start time
-          const segmentElement = document.querySelector(
-            `[data-transcription-id="${transcription._id}"] [data-segment-start="${targetSegmentStart}"]`
-          );
-
-          if (segmentElement) {
-            segmentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            // Add a temporary pulse effect to draw attention
-            segmentElement.classList.add('animate-pulse');
-            setTimeout(() => {
-              segmentElement.classList.remove('animate-pulse');
-            }, 2000);
-          } else {
-            // Fallback: scroll to the transcription block if specific segment not found
-            const transcriptionCard = document.querySelector(`[data-transcription-id="${transcription._id}"]`);
-            if (transcriptionCard) {
-              transcriptionCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-          }
-        }, 200); // Give time for timestamps to show
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoPlayRequest, transcriptions, hasProcessedAutoPlay]);
-
-  // Reset the processed flag when autoPlayRequest changes
-  useEffect(() => {
-    if (autoPlayRequest) {
-      setHasProcessedAutoPlay(false);
-    }
-  }, [autoPlayRequest]);
-
   const handleDragOver = (e: React.DragEvent) => {
+    if (isReadOnly) return;
     e.preventDefault();
-    if (!isReadOnly) setIsDragging(true);
+    setIsDragging(true);
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
+    if (isReadOnly) return;
     e.preventDefault();
     setIsDragging(false);
   };
 
   const handleDrop = async (e: React.DragEvent) => {
+    if (isReadOnly) return;
     e.preventDefault();
     setIsDragging(false);
-    if (isReadOnly) return;
 
-    const files = Array.from(e.dataTransfer.files);
-    const audioFiles = files.filter(file =>
-      file.type.startsWith("audio/") ||
-      file.name.match(/\.(mp3|wav|m4a|webm|ogg|flac)$/i)
-    );
-
-    if (audioFiles.length > 0) {
-      await handleFileUpload(audioFiles[0]);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (file.type.startsWith("audio/")) {
+        await handleFileUpload(file);
+      } else {
+        alert("Please upload an audio file");
+      }
     }
   };
 
@@ -192,7 +110,7 @@ export function AudioTranscriptionBlock({ dynamicFileId, isReadOnly = false, aut
 
       setUploadProgress(80);
 
-      // Step 5: Trigger transcription
+      // Step 5: Trigger transcription (summary auto-generates after)
       await transcribeAudio({
         transcriptionId,
         storageId,
@@ -216,65 +134,6 @@ export function AudioTranscriptionBlock({ dynamicFileId, isReadOnly = false, aut
     }
   };
 
-  const toggleAudioPlayback = async (audioId: string, audioUrl?: string, startTime?: number) => {
-    if (!audioUrl) return;
-
-    let audio = audioRefs.current[audioId];
-
-    // If audio doesn't exist, create it
-    if (!audio) {
-      audio = new Audio(audioUrl);
-      audioRefs.current[audioId] = audio;
-
-      audio.addEventListener("ended", () => {
-        setPlayingAudio(null);
-      });
-
-      // Track current time for highlighting active segment
-      audio.addEventListener("timeupdate", () => {
-        setCurrentTime(prev => ({ ...prev, [audioId]: audio.currentTime }));
-      });
-    }
-
-    // Pause any other playing audio first
-    for (const [id, a] of Object.entries(audioRefs.current)) {
-      if (id !== audioId && a && !a.paused) {
-        a.pause();
-      }
-    }
-
-    // If a specific start time is provided, seek to it
-    if (startTime !== undefined) {
-      audio.currentTime = startTime;
-      try {
-        await audio.play();
-        setPlayingAudio(audioId);
-      } catch (error) {
-        // Ignore play promise rejection errors
-        console.log('Audio play interrupted:', error);
-      }
-    } else {
-      // Toggle play/pause
-      if (playingAudio === audioId && !audio.paused) {
-        audio.pause();
-        setPlayingAudio(null);
-      } else {
-        try {
-          await audio.play();
-          setPlayingAudio(audioId);
-        } catch (error) {
-          // Ignore play promise rejection errors
-          console.log('Audio play interrupted:', error);
-        }
-      }
-    }
-  };
-
-  const seekToTimestamp = async (audioId: string, audioUrl: string | undefined, timestamp: number) => {
-    if (!audioUrl) return;
-    await toggleAudioPlayback(audioId, audioUrl, timestamp);
-  };
-
   const handleDelete = async (id: Id<"audioTranscriptions">, fileName: string) => {
     if (isReadOnly) return;
 
@@ -284,20 +143,8 @@ export function AudioTranscriptionBlock({ dynamicFileId, isReadOnly = false, aut
     }
 
     try {
-      // Clean up audio ref if exists
-      const audioRef = audioRefs.current[id];
-      if (audioRef) {
-        audioRef.pause();
-        delete audioRefs.current[id];
-      }
-      if (playingAudio === id) {
-        setPlayingAudio(null);
-      }
-
       // Delete from backend
       await deleteTranscription({ id });
-
-      // Show success feedback (optional - you can add a toast here if you have a toast library)
       console.log(`Successfully deleted ${fileName}`);
     } catch (error) {
       console.error("Error deleting transcription:", error);
@@ -321,13 +168,13 @@ export function AudioTranscriptionBlock({ dynamicFileId, isReadOnly = false, aut
         >
           <div className="flex flex-col items-center justify-center space-y-4">
             <div className="p-4 bg-primary/10 rounded-full">
-              <Mic className="h-8 w-8 text-primary" />
+              <AudioLines className="h-8 w-8 text-primary" />
             </div>
 
             <div className="text-center">
-              <p className="text-lg font-medium">Upload Audio for Transcription</p>
+              <p className="text-lg font-medium">Upload Audio for AI Summary</p>
               <p className="text-sm text-muted-foreground mt-1">
-                Drag and drop or click to upload audio files
+                Your audio will be transcribed and summarized by AI
               </p>
               <p className="text-xs text-muted-foreground mt-2">
                 Supports MP3, WAV, M4A, WebM, OGG, FLAC
@@ -342,7 +189,7 @@ export function AudioTranscriptionBlock({ dynamicFileId, isReadOnly = false, aut
               {isUploading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Uploading...
+                  Processing...
                 </>
               ) : (
                 <>
@@ -365,8 +212,9 @@ export function AudioTranscriptionBlock({ dynamicFileId, isReadOnly = false, aut
                 <Progress value={uploadProgress} className="h-2" />
                 <p className="text-xs text-center mt-1 text-muted-foreground">
                   {uploadProgress < 50 ? "Uploading..." :
-                   uploadProgress < 80 ? "Processing..." :
-                   "Transcribing..."}
+                   uploadProgress < 80 ? "Transcribing..." :
+                   uploadProgress < 95 ? "Generating AI Summary..." :
+                   "Almost done..."}
                 </p>
               </div>
             )}
@@ -381,158 +229,114 @@ export function AudioTranscriptionBlock({ dynamicFileId, isReadOnly = false, aut
         </div>
       ) : transcriptions.length > 0 ? (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-muted-foreground">
-              Audio Transcriptions ({transcriptions.length})
-            </h3>
-          </div>
+          {(() => {
+            let cumulativePointCount = 0;
 
-          {transcriptions.map((item) => (
-            <Card key={item._id} className="overflow-hidden" data-transcription-id={item._id} data-filename={item.fileName}>
-              <CardContent className="p-4">
-                <div className="space-y-3">
-                  {/* Header */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3 flex-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => toggleAudioPlayback(item._id, item.audioUrl || undefined).catch(console.log)}
-                        disabled={item.status !== "completed" || !item.audioUrl}
-                      >
-                        {playingAudio === item._id ? (
-                          <Pause className="h-4 w-4" />
-                        ) : (
-                          <Play className="h-4 w-4" />
-                        )}
-                      </Button>
+            return transcriptions.map((item) => {
+              const currentOffset = cumulativePointCount;
+              // Add the number of points in this transcription to the cumulative count
+              if (item.summary && item.summary.points) {
+                cumulativePointCount += item.summary.points.length;
+              }
 
-                      <div className="flex-1">
-                        <p className="font-medium text-sm">{item.fileName}</p>
-                        <div className="flex items-center space-x-2 text-xs text-muted-foreground">
-                          {item.language && <span>Language: {item.language}</span>}
-                          {item.duration && (
-                            <span>
-                              {playingAudio === item._id && currentTime[item._id] ?
-                                `${formatTimestamp(currentTime[item._id])} / ${formatTimestamp(item.duration)}` :
-                                `${Math.round(item.duration)}s`
-                              }
-                            </span>
-                          )}
-                        </div>
-                        {/* Progress bar */}
-                        {playingAudio === item._id && item.duration && (
-                          <div className="mt-2">
-                            <Progress
-                              value={(currentTime[item._id] || 0) / item.duration * 100}
-                              className="h-1"
-                            />
+              return (
+                <div key={item._id} className="space-y-3">
+                  {/* Show summary if available, or processing status */}
+                  {item.status === "completed" ? (
+                    item.summary ? (
+                      <AudioTranscriptionSummary
+                        transcriptionId={item._id}
+                        summary={item.summary}
+                        fileName={item.fileName}
+                        displayName={item.displayName}
+                        onDelete={handleDelete}
+                        isReadOnly={isReadOnly}
+                        pointOffset={currentOffset}
+                      />
+                ) : (
+                  <Card className="bg-gray-50">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <AudioLines className="h-5 w-5 text-gray-500" />
+                          <div>
+                            <p className="font-medium text-sm">{item.fileName}</p>
+                            <p className="text-xs text-gray-500">Processing AI summary...</p>
                           </div>
+                        </div>
+                        {!isReadOnly && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleDelete(item._id, item.fileName)}
+                            className="hover:bg-destructive hover:text-destructive-foreground"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         )}
                       </div>
+                    </CardContent>
+                  </Card>
+                )
+              ) : item.status === "processing" ? (
+                <Card className="bg-gray-50">
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Loader2 className="h-5 w-5 animate-spin text-gray-500" />
+                        <div>
+                          <p className="font-medium text-sm">{item.fileName}</p>
+                          <p className="text-xs text-gray-500">Transcribing audio...</p>
+                        </div>
+                      </div>
                     </div>
-
-                    {!isReadOnly && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleDelete(item._id, item.fileName)}
-                        className="hover:bg-destructive hover:text-destructive-foreground"
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Delete
-                      </Button>
-                    )}
-                  </div>
-
-                  {/* Status or Transcription */}
-                  {item.status === "completed" ? (
-                    <div className="space-y-2">
-                      {/* Toggle to expand/collapse transcription in read-only mode */}
-                      {isReadOnly && (
+                  </CardContent>
+                </Card>
+              ) : item.status === "failed" ? (
+                <Card className="bg-red-50">
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <AudioLines className="h-5 w-5 text-red-500" />
+                        <div>
+                          <p className="font-medium text-sm">{item.fileName}</p>
+                          <p className="text-xs text-red-500">
+                            Error: {item.error || "Transcription failed"}
+                          </p>
+                        </div>
+                      </div>
+                      {!isReadOnly && (
                         <Button
                           size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            const newExpanded = new Set(expandedTranscriptions);
-                            if (newExpanded.has(item._id)) {
-                              newExpanded.delete(item._id);
-                            } else {
-                              newExpanded.add(item._id);
-                            }
-                            setExpandedTranscriptions(newExpanded);
-                          }}
-                          className="text-xs"
+                          variant="outline"
+                          onClick={() => handleDelete(item._id, item.fileName)}
+                          className="hover:bg-destructive hover:text-destructive-foreground"
                         >
-                          <Clock className="h-3 w-3 mr-1" />
-                          {expandedTranscriptions.has(item._id) ? "Hide Transcription" : "Show Transcription"}
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       )}
-
-                      {/* Show transcription content only if expanded (or always in edit mode) */}
-                      {(!isReadOnly || expandedTranscriptions.has(item._id)) && (
-                        <div className="bg-muted/50 rounded-md p-3">
-                          {/* Show segments with timestamps if available and enabled */}
-                          {showTimestamps && item.segments && item.segments.length > 0 ? (
-                          <div className="space-y-2">
-                            {item.segments.map((segment, idx) => {
-                              const isActive = playingAudio === item._id &&
-                                currentTime[item._id] >= segment.start &&
-                                currentTime[item._id] < segment.end;
-
-                              return (
-                                <div
-                                  key={idx}
-                                  data-segment-start={segment.start}
-                                  onClick={() => seekToTimestamp(item._id, item.audioUrl || undefined, segment.start).catch(console.log)}
-                                  className={cn(
-                                    "flex gap-2 group transition-all cursor-pointer hover:bg-muted/30 rounded px-2 py-1 -mx-2",
-                                    isActive && "bg-primary/10 hover:bg-primary/15"
-                                  )}
-                                  title={`Jump to ${formatTimestamp(segment.start)}`}
-                                >
-                                  <span
-                                    className={cn(
-                                      "text-xs font-mono whitespace-nowrap transition-colors",
-                                      isActive ? "text-primary font-semibold" : "text-muted-foreground group-hover:text-primary"
-                                    )}
-                                  >
-                                    [{formatTimestamp(segment.start)}]
-                                  </span>
-                                  <p className={cn(
-                                    "text-sm flex-1",
-                                    isActive && "text-foreground font-medium"
-                                  )}>
-                                    {segment.text}
-                                  </p>
-                                </div>
-                              );
-                            })}
-                          </div>
-                          ) : (
-                            <p className="text-sm whitespace-pre-wrap">{item.transcription}</p>
-                          )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card className="bg-gray-50">
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <AudioLines className="h-5 w-5 text-gray-500" />
+                        <div>
+                          <p className="font-medium text-sm">{item.fileName}</p>
+                          <p className="text-xs text-gray-500">Pending...</p>
                         </div>
-                      )}
+                      </div>
                     </div>
-                  ) : item.status === "processing" ? (
-                    <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>Transcribing audio...</span>
-                    </div>
-                  ) : item.status === "failed" ? (
-                    <div className="text-sm text-destructive">
-                      Error: {item.error || "Transcription failed"}
-                    </div>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">
-                      Pending transcription...
-                    </div>
-                  )}
+                  </CardContent>
+                </Card>
+              )}
                 </div>
-              </CardContent>
-            </Card>
-          ))}
+              );
+            });
+          })()}
         </div>
       ) : null}
     </div>

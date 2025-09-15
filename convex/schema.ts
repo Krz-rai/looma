@@ -112,6 +112,7 @@ export default defineSchema({
     dynamicFileId: v.id("dynamicFiles"),
     storageId: v.id("_storage"),
     fileName: v.string(),
+    displayName: v.optional(v.string()), // User-editable display name
     transcription: v.string(),
     language: v.optional(v.string()),
     duration: v.optional(v.number()),
@@ -120,6 +121,18 @@ export default defineSchema({
       start: v.number(),
       end: v.number(),
     }))),
+    summary: v.optional(v.object({
+      points: v.array(v.object({
+        text: v.string(),
+        segmentReferences: v.array(v.object({
+          segmentIndex: v.number(),
+          start: v.number(),
+          end: v.number(),
+          originalText: v.string(),
+        })),
+      })),
+      generatedAt: v.number(),
+    })),
     status: v.union(
       v.literal("pending"),
       v.literal("processing"),

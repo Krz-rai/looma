@@ -42,6 +42,7 @@ export default function PublicResumePage() {
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [highlightedItem, setHighlightedItem] = useState<{ type: string; id: string } | null>(null);
+  // const [isAnimating, setIsAnimating] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [selectedFileId, setSelectedFileId] = useState<Id<"dynamicFiles"> | null>(null);
   const [highlightedLine, setHighlightedLine] = useState<string | null>(null);
@@ -90,155 +91,6 @@ export default function PublicResumePage() {
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleCitationClick = (type: string, id: string, text: string) => {
-    // Handle GitHub citation clicks
-    if (type === 'github' && resume?.github) {
-      // Extract username from github field
-      const githubUrlMatch = resume.github.match(/(?:github\.com\/)?([a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38})\/?$/);
-      if (githubUrlMatch) {
-        const username = githubUrlMatch[1];
-        // Check if id contains a specific repo name (format: "github:reponame")
-        if (id && id.startsWith('github:')) {
-          const repoName = id.substring(7); // Remove "github:" prefix
-          window.open(`https://github.com/${username}/${repoName}`, '_blank');
-        } else {
-          // Just open the main profile
-          window.open(`https://github.com/${username}`, '_blank');
-        }
-      }
-      return;
-    }
-
-    // Handle Portfolio citation clicks
-    if (type === 'portfolio' && resume?.portfolio) {
-      const portfolioUrl = resume.portfolio.startsWith('http') 
-        ? resume.portfolio 
-        : `https://${resume.portfolio}`;
-      
-      // Check if id contains a specific page (format: "portfolio:/projects/name")
-      if (id && id.startsWith('portfolio:')) {
-        const path = id.substring(10); // Remove "portfolio:" prefix
-        window.open(`${portfolioUrl}${path}`, '_blank');
-      } else {
-        // Just open the main portfolio
-        window.open(portfolioUrl, '_blank');
-      }
-      return;
-    }
-    
-    // Handle Audio citation clicks - open page and play audio at timestamp
-    if (type === 'audio') {
-      // Parse audio data from id format: "audio:<pageConvexId>:<filename>:<timestamp>"
-      const [, pageId, fileName, timestampStr] = id.split(':');
-      const timestamp = parseInt(timestampStr) || 0;
-
-      console.log('🎵 Audio citation clicked:', {
-        pageId,
-        fileName,
-        timestamp,
-        text
-      });
-
-      // Open the page
-      setSelectedFileId(pageId as Id<"dynamicFiles">);
-      setHighlightedLine(null);
-
-      // Set the audio play request
-      setAudioPlayRequest({ fileName, timestamp });
-
-      // Open right panel if not already open
-      if (!rightPanelOpen) {
-        setRightPanelOpen(true);
-      }
-      return;
-    }
-
-    // Handle Page citation clicks - show page content on right
-    if (type === 'page') {
-      const lineMatch = text.match(/\bL(\d+)(?:-L\d+)?/);
-      const lineNumber = lineMatch ? lineMatch[1] : null;
-
-      console.log('📄 Page citation clicked:', {
-        type,
-        id,
-        text,
-        lineNumber,
-        fullText: JSON.stringify(text),
-        lineMatch
-      });
-
-      // Clear any audio play request when switching to a different page
-      setAudioPlayRequest(undefined);
-
-      // Check if clicking the same page citation that's already highlighted
-      const isAlreadyHighlighted = selectedFileId === id && highlightedLine === lineNumber;
-
-      if (isAlreadyHighlighted) {
-        // Force re-highlight by clearing and re-setting
-        setHighlightedLine(null);
-        setTimeout(() => {
-          setHighlightedLine(lineNumber);
-        }, 50);
-      } else {
-        // Normal highlight for different citation
-        setSelectedFileId(id as Id<"dynamicFiles">);
-        setHighlightedLine(lineNumber);
-      }
-
-      // Open right panel if not already open
-      if (!rightPanelOpen) {
-        setRightPanelOpen(true);
-      }
-      return;
-    }
-    
-    // Check if we need to switch from page view to resume view
-    const wasInPageView = selectedFileId !== null;
-    
-    // Clear page view to show resume content
-    if (selectedFileId) {
-      setSelectedFileId(null);
-      setHighlightedLine(null);
-    }
-    
-    // Open right panel to show resume content and scroll to citation
-    if (!rightPanelOpen) {
-      setRightPanelOpen(true);
-      // Panel will expand via the defaultSize prop change
-    }
-    
-    // If same item is clicked, just scroll to it
-    if (highlightedItem?.type === type && highlightedItem?.id === id) {
-      setTimeout(() => {
-        const element = document.getElementById(`${type}-${id}`);
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      }, 100);
-      return;
-    }
-    
-    // Clear previous highlight
-    setHighlightedItem(null);
-    
-    // Set new highlight after a brief delay to ensure clean transition
-    // Use longer delay if switching from page view to ensure DOM updates
-    const delay = wasInPageView ? 300 : 100;
-    setTimeout(() => {
-      setHighlightedItem({ type, id });
-
-      // For branches, we need additional delay to ensure the bullet point expands
-      const scrollDelay = type === 'branch' ? 200 : 0;
-
-      setTimeout(() => {
-        // Scroll to element
-        const element = document.getElementById(`${type}-${id}`);
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      }, scrollDelay);
-    }, delay);
-  };
 
   if (!resume) {
     return (
@@ -430,154 +282,163 @@ export default function PublicResumePage() {
                       id="resume-content"
                       className="max-w-3xl mx-auto px-6 py-8"
                     >
-                      {/* Resume Header - Notion-like hierarchy */}
-                      <div className="mb-12 space-y-6">
-                        {/* Name and Role */}
-                        <div className="space-y-2">
-                          <h1 className="text-3xl font-normal tracking-tight">
-                            {resume.name || resume.title}
-                          </h1>
-                          {resume.role && (
-                            <p className="text-base text-muted-foreground">
-                              {resume.role}
-                            </p>
-                          )}
-                        </div>
-                        
-                        {/* Contact Information - Compact inline style with icons */}
-                        {(resume.email || resume.phone || resume.location) && (
-                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                            {resume.email && (
-                              <div className="flex items-center gap-1.5">
-                                <Mail className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                <span>{resume.email}</span>
-                              </div>
-                            )}
-                            {resume.phone && (
-                              <div className="flex items-center gap-1.5">
-                                <Phone className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                <span>{resume.phone}</span>
-                              </div>
-                            )}
-                            {resume.location && (
-                              <div className="flex items-center gap-1.5">
-                                <MapPin className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                <span>{resume.location}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        
-                        {/* Links - Clean inline style with icons */}
-                        {(resume.linkedIn || resume.github || resume.portfolio) && (
-                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                            {resume.linkedIn && (
-                              <a href={resume.linkedIn.startsWith('http') ? resume.linkedIn : `https://linkedin.com/in/${resume.linkedIn}`} 
-                                 target="_blank" 
-                                 rel="noopener noreferrer"
-                                 className="flex items-center gap-1.5 hover:text-foreground transition-colors">
-                                <LinkedinIcon className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                <span>{resume.linkedIn.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '')}</span>
-                              </a>
-                            )}
-                            {resume.github && (
-                              <a href={resume.github.startsWith('http') ? resume.github : `https://github.com/${resume.github}`}
-                                 target="_blank"
-                                 rel="noopener noreferrer"
-                                 className="flex items-center gap-1.5 hover:text-foreground transition-colors">
-                                <GithubIcon className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                <span>{resume.github.replace(/^https?:\/\/(www\.)?github\.com\//, '')}</span>
-                              </a>
-                            )}
-                            {resume.portfolio && (
-                              <a href={resume.portfolio.startsWith('http') ? resume.portfolio : `https://${resume.portfolio}`}
-                                 target="_blank"
-                                 rel="noopener noreferrer"
-                                 className="flex items-center gap-1.5 hover:text-foreground transition-colors">
-                                <GlobeIcon className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                <span>{resume.portfolio.replace(/^https?:\/\/(www\.)?/, '')}</span>
-                              </a>
-                            )}
-                          </div>
-                        )}
-                        
-                        {/* Education - Compact style */}
-                        {(resume.university || resume.degree || resume.major || resume.gpa || resume.graduationDate) && (
-                          <div className="py-3 border-y border-border/20">
-                            <div className="text-xs font-medium text-muted-foreground/70 mb-1.5">EDUCATION</div>
-                            <div className="text-sm">
-                              <div className="font-medium">{resume.university}</div>
-                              {(resume.degree || resume.major) && (
-                                <div className="text-muted-foreground">
-                                  {resume.degree}
-                                  {resume.degree && resume.major && ' in '}
-                                  {resume.major}
-                                </div>
-                              )}
-                              {(resume.graduationDate || resume.gpa) && (
-                                <div className="text-muted-foreground text-xs mt-0.5">
-                                  {resume.graduationDate}
-                                  {resume.gpa && resume.graduationDate && ' • '}
-                                  {resume.gpa && `GPA: ${resume.gpa}`}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                        
-                        {/* Professional Summary */}
-                        {resume.description && (
-                          <p className="text-sm text-muted-foreground leading-relaxed">
-                            {resume.description}
-                          </p>
-                        )}
-                        
-                        {/* Skills */}
-                        {resume.skills && resume.skills.length > 0 && (
-                          <div className="space-y-1.5">
-                            <div className="text-xs font-medium text-muted-foreground/70">SKILLS</div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {resume.skills.map((skill, index) => (
-                                <span
-                                  key={index}
-                                  className="px-2.5 py-1 bg-muted/50 rounded-md text-xs"
-                                >
-                                  {skill}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        
-                        {/* Divider */}
-                        <div className="border-b border-border/40" />
-                      </div>
+                // Handle GitHub citation clicks
+                if (type === 'github' && resume?.github) {
+                  // Extract username from github field (e.g., "Krz-rai" or "github.com/Krz-rai")
+                  const githubUrlMatch = resume.github.match(/(?:github\.com\/)?([a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38})\/?$/);
+                  if (githubUrlMatch) {
+                    const username = githubUrlMatch[1];
+                    // Check if id contains a specific repo name (format: "github:reponame")
+                    if (id && id.startsWith('github:')) {
+                      const repoName = id.substring(7); // Remove "github:" prefix
+                      window.open(`https://github.com/${username}/${repoName}`, '_blank');
+                    } else {
+                      // Just open the main profile
+                      window.open(`https://github.com/${username}`, '_blank');
+                    }
+                  }
+                  return;
+                }
+                
+                // Handle Portfolio citation clicks
+                if (type === 'portfolio' && resume?.portfolio) {
+                  const portfolioUrl = resume.portfolio.startsWith('http') 
+                    ? resume.portfolio 
+                    : `https://${resume.portfolio}`;
+                  
+                  // Check if id contains a specific page (format: "portfolio:/projects/name")
+                  if (id && id.startsWith('portfolio:')) {
+                    const path = id.substring(10); // Remove "portfolio:" prefix
+                    window.open(`${portfolioUrl}${path}`, '_blank');
+                  } else {
+                    // Just open the main portfolio
+                    window.open(portfolioUrl, '_blank');
+                  }
+                  return;
+                }
+                
+                // Handle Audio citation clicks - open page and play audio at timestamp
+                if (type === 'audio') {
+                  // Parse audio data from id format: "audio:<pageConvexId>:<filename>:<timestamp>"
+                  const [, pageId, fileName, timestampStr] = id.split(':');
+                  const timestamp = parseInt(timestampStr) || 0;
 
-                      {projects && projects.length > 0 ? (
-                        <div className="space-y-8">
-                          {projects.map((project, index) => (
-                            <ProjectView 
-                              key={project._id} 
-                              project={project} 
-                              highlightedItem={highlightedItem}
-                              index={index}
-                              setBulletPointsByProject={setBulletPointsByProject}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="py-16 text-center">
-                          <p className="text-sm text-muted-foreground">
-                            No projects added to this resume yet.
-                          </p>
-                        </div>
-                      )}
-                    </main>
-                  </div>
-                )}
+                  console.log('🎵 Audio citation clicked:', {
+                    pageId,
+                    fileName,
+                    timestamp,
+                    text
+                  });
+
+                  // Open the page
+                  setSelectedFileId(pageId as Id<"dynamicFiles">);
+                  setHighlightedLine(null);
+
+                  // Set the audio play request
+                  setAudioPlayRequest({ fileName, timestamp });
+
+                  // Open right panel if not already open
+                  if (!rightPanelOpen) {
+                    setRightPanelOpen(true);
+                  }
+
+                  return;
+                }
+
+                // Handle Page citation clicks - show page content on right
+                if (type === 'page') {
+                  // Extract line number from text which could be:
+                  // - "Real-Time Fraud Detection System L15" (with quotes in the text)
+                  // - Real-Time Fraud Detection System L15 (without quotes)
+                  // The text parameter already has quotes stripped, so just look for L# pattern
+                  const lineMatch = text.match(/\bL(\d+)(?:-L\d+)?/);
+                  const lineNumber = lineMatch ? lineMatch[1] : null;
+
+                  console.log('📄 Page citation clicked:', {
+                    type,
+                    id,
+                    text,
+                    lineNumber,
+                    fullText: JSON.stringify(text),
+                    lineMatch
+                  });
+
+                  // Clear any audio play request when switching to a different page
+                  setAudioPlayRequest(undefined);
+
+                  // Check if clicking the same page citation that's already highlighted
+                  const isAlreadyHighlighted = selectedFileId === id && highlightedLine === lineNumber;
+
+                  if (isAlreadyHighlighted) {
+                    // Force re-highlight by clearing and re-setting
+                    setHighlightedLine(null);
+                    setTimeout(() => {
+                      setHighlightedLine(lineNumber);
+                    }, 50);
+                  } else {
+                    // Normal highlight for different citation
+                    setSelectedFileId(id as Id<"dynamicFiles">);
+                    setHighlightedLine(lineNumber);
+                  }
+
+                  // Open right panel if not already open
+                  if (!rightPanelOpen) {
+                    setRightPanelOpen(true);
+                  }
+                  return;
+                }
+                
+                // Check if we need to switch from page view to resume view
+                const wasInPageView = selectedFileId !== null;
+                
+                // Clear page view to show resume content
+                if (selectedFileId) {
+                  setSelectedFileId(null);
+                  setHighlightedLine(null);
+                }
+                
+                // Open right panel to show resume content and scroll to citation
+                if (!rightPanelOpen) {
+                  setRightPanelOpen(true);
+                  // Panel will expand via the defaultSize prop change
+                }
+                
+                // If same item is clicked, just scroll to it
+                if (highlightedItem?.type === type && highlightedItem?.id === id) {
+                  setTimeout(() => {
+                    const element = document.getElementById(`${type}-${id}`);
+                    if (element) {
+                      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                  }, 100);
+                  return;
+                }
+                
+                // Clear previous highlight
+                setHighlightedItem(null);
+                
+                // Set new highlight after a brief delay to ensure clean transition
+                // Use longer delay if switching from page view to ensure DOM updates
+                const delay = wasInPageView ? 300 : 100;
+                setTimeout(() => {
+                  setHighlightedItem({ type, id });
+
+                  // For branches, we need additional delay to ensure the bullet point expands
+                  const scrollDelay = type === 'branch' ? 200 : 0;
+
+                  setTimeout(() => {
+                    // Scroll to element
+                    const element = document.getElementById(`${type}-${id}`);
+                    if (element) {
+                      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                  }, scrollDelay);
+                }, delay);
+                  }}
+                  />
               </div>
             </ResizablePanel>
-
+            
             {/* Always render handle and panel to preserve state */}
             <ResizableHandle
               withHandle
@@ -597,8 +458,152 @@ export default function PublicResumePage() {
                   bulletPointsByProject={bulletPointsByProject}
                   dynamicFiles={dynamicFiles}
                   branchesByBulletPoint={branchesByBulletPoint}
-                  onCitationClick={handleCitationClick}
-                />
+                  onCitationClick={(type: string, id: string, text: string) => {
+                  {/* Resume Header - Notion-like hierarchy */}
+                  <div className="mb-12 space-y-6">
+                    {/* Name and Role */}
+                    <div className="space-y-2">
+                      <h1 className="text-3xl font-normal tracking-tight">
+                        {resume.name || resume.title}
+                      </h1>
+                      {resume.role && (
+                        <p className="text-base text-muted-foreground">
+                          {resume.role}
+                        </p>
+                      )}
+                    </div>
+                    
+                    {/* Contact Information - Compact inline style with icons */}
+                    {(resume.email || resume.phone || resume.location) && (
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                        {resume.email && (
+                          <div className="flex items-center gap-1.5">
+                            <Mail className="h-3.5 w-3.5" strokeWidth={1.5} />
+                            <span>{resume.email}</span>
+                          </div>
+                        )}
+                        {resume.phone && (
+                          <div className="flex items-center gap-1.5">
+                            <Phone className="h-3.5 w-3.5" strokeWidth={1.5} />
+                            <span>{resume.phone}</span>
+                          </div>
+                        )}
+                        {resume.location && (
+                          <div className="flex items-center gap-1.5">
+                            <MapPin className="h-3.5 w-3.5" strokeWidth={1.5} />
+                            <span>{resume.location}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Links - Clean inline style with icons */}
+                    {(resume.linkedIn || resume.github || resume.portfolio) && (
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                        {resume.linkedIn && (
+                          <a href={resume.linkedIn.startsWith('http') ? resume.linkedIn : `https://linkedin.com/in/${resume.linkedIn}`} 
+                             target="_blank" 
+                             rel="noopener noreferrer"
+                             className="flex items-center gap-1.5 hover:text-foreground transition-colors">
+                            <LinkedinIcon className="h-3.5 w-3.5" strokeWidth={1.5} />
+                            <span>{resume.linkedIn.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '')}</span>
+                          </a>
+                        )}
+                        {resume.github && (
+                          <a href={resume.github.startsWith('http') ? resume.github : `https://github.com/${resume.github}`}
+                             target="_blank"
+                             rel="noopener noreferrer"
+                             className="flex items-center gap-1.5 hover:text-foreground transition-colors">
+                            <GithubIcon className="h-3.5 w-3.5" strokeWidth={1.5} />
+                            <span>{resume.github.replace(/^https?:\/\/(www\.)?github\.com\//, '')}</span>
+                          </a>
+                        )}
+                        {resume.portfolio && (
+                          <a href={resume.portfolio.startsWith('http') ? resume.portfolio : `https://${resume.portfolio}`}
+                             target="_blank"
+                             rel="noopener noreferrer"
+                             className="flex items-center gap-1.5 hover:text-foreground transition-colors">
+                            <GlobeIcon className="h-3.5 w-3.5" strokeWidth={1.5} />
+                            <span>{resume.portfolio.replace(/^https?:\/\/(www\.)?/, '')}</span>
+                          </a>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Education - Compact style */}
+                    {(resume.university || resume.degree || resume.major || resume.gpa || resume.graduationDate) && (
+                      <div className="py-3 border-y border-border/20">
+                        <div className="text-xs font-medium text-muted-foreground/70 mb-1.5">EDUCATION</div>
+                        <div className="text-sm">
+                          <div className="font-medium">{resume.university}</div>
+                          {(resume.degree || resume.major) && (
+                            <div className="text-muted-foreground">
+                              {resume.degree}
+                              {resume.degree && resume.major && ' in '}
+                              {resume.major}
+                            </div>
+                          )}
+                          {(resume.graduationDate || resume.gpa) && (
+                            <div className="text-muted-foreground text-xs mt-0.5">
+                              {resume.graduationDate}
+                              {resume.gpa && resume.graduationDate && ' • '}
+                              {resume.gpa && `GPA: ${resume.gpa}`}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Professional Summary */}
+                    {resume.description && (
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        {resume.description}
+                      </p>
+                    )}
+                    
+                    {/* Skills */}
+                    {resume.skills && resume.skills.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="text-xs font-medium text-muted-foreground/70">SKILLS</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {resume.skills.map((skill, index) => (
+                            <span
+                              key={index}
+                              className="px-2.5 py-1 bg-muted/50 rounded-md text-xs"
+                            >
+                              {skill}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Divider */}
+                    <div className="border-b border-border/40" />
+                  </div>
+
+                  {projects && projects.length > 0 ? (
+                    <div className="space-y-8">
+                      {projects.map((project, index) => (
+                        <ProjectView 
+                          key={project._id} 
+                          project={project} 
+                          highlightedItem={highlightedItem}
+                          index={index}
+                          setBulletPointsByProject={setBulletPointsByProject}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="py-16 text-center">
+                      <p className="text-sm text-muted-foreground">
+                        No projects added to this resume yet.
+                      </p>
+                    </div>
+                  )}
+                    </main>
+                  </div>
+                )}
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>

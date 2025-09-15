@@ -114,6 +114,18 @@ export const transcribeAudio = action({
         status: "completed",
       });
 
+      // Auto-generate summary after successful transcription
+      try {
+        console.log("Auto-generating summary for transcription:", args.transcriptionId);
+        await ctx.runAction(api.audioTranscription.generateTranscriptionSummary, {
+          transcriptionId: args.transcriptionId,
+        });
+        console.log("Summary auto-generated successfully");
+      } catch (summaryError) {
+        console.error("Failed to auto-generate summary:", summaryError);
+        // Don't fail the transcription if summary generation fails
+      }
+
       return {
         success: true,
         transcription: result.text,
@@ -137,6 +149,166 @@ export const transcribeAudio = action({
     }
   },
 });
+
+// Generate AI summary of transcription with segment references
+export const generateTranscriptionSummary = action({
+  args: {
+    transcriptionId: v.id("audioTranscriptions"),
+  },
+  handler: async (ctx, args) => {
+    try {
+      // Get the transcription with segments
+      const transcription = await ctx.runQuery(api.audioTranscription.getTranscriptionById, {
+        id: args.transcriptionId,
+      });
+
+      if (!transcription || !transcription.segments || transcription.segments.length === 0) {
+        throw new Error("Transcription not found or has no segments");
+      }
+
+      // Get Cerebras API key
+      const apiKey = process.env.CEREBRAS_API_KEY;
+      if (!apiKey) {
+        throw new Error("CEREBRAS_API_KEY is not configured");
+      }
+
+      // Create prompt for summary generation
+      const segmentsText = transcription.segments.map((seg, idx) =>
+        `[Segment ${idx}] (${formatTimestamp(seg.start)} - ${formatTimestamp(seg.end)}): ${seg.text}`
+      ).join('\n\n');
+
+      const prompt = `You are creating a structured summary of an audio transcription.
+The transcription is divided into segments with timestamps.
+
+TRANSCRIPTION:
+${segmentsText}
+
+TASK:
+Create a comprehensive summary with key points. Each point should:
+1. Preserve ALL important details, nuances, and specific information from the transcription
+2. Use "He" or "She" based on the speaker's voice/context (never use "The speaker")
+3. Maintain the exact meaning and details - do not simplify or generalize
+4. Can be longer if needed to capture all the information (no strict length limit)
+5. Reference the source segments
+
+Return the response in this exact JSON format:
+{
+  "points": [
+    {
+      "text": "Summary point text here",
+      "segmentReferences": [
+        {
+          "segmentIndex": 0,
+          "start": segment_start_time,
+          "end": segment_end_time,
+          "originalText": "exact text from the segment"
+        }
+      ]
+    }
+  ]
+}
+
+IMPORTANT:
+- Generate as many points as needed to cover ALL content (no minimum or maximum)
+- Preserve specific details, numbers, names, examples, and exact phrasing
+- Use "He" or "She" pronouns consistently based on the speaker
+- Do not worry about length - completeness and accuracy are more important than brevity
+- Include the exact verbatim text from the segments referenced
+- Capture every meaningful statement, opinion, example, or piece of information`;
+
+      // Generate summary using Cerebras
+      const response = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-oss-120b",
+          messages: [
+            {
+              role: "system",
+              content: "You are a helpful assistant that creates structured summaries of audio transcriptions. Always respond with valid JSON."
+            },
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          temperature: 0.3,
+          max_tokens: 4000,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Cerebras API error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      const text = data.choices[0].message.content;
+
+      // Parse JSON response
+      let summaryData;
+      try {
+        // Extract JSON from response (in case there's extra text)
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          summaryData = JSON.parse(jsonMatch[0]);
+        } else {
+          throw new Error("No JSON found in response");
+        }
+      } catch (parseError) {
+        console.error("Failed to parse summary JSON:", text);
+        throw new Error("Failed to parse AI summary response");
+      }
+
+      // Validate and enhance segment references with actual segment text
+      const enhancedPoints = summaryData.points.map((point: any) => ({
+        text: point.text,
+        segmentReferences: point.segmentReferences.map((ref: any) => {
+          const segment = transcription.segments![ref.segmentIndex];
+          return {
+            segmentIndex: ref.segmentIndex,
+            start: segment.start,
+            end: segment.end,
+            originalText: segment.text,
+          };
+        }),
+      }));
+
+      // Save summary to database
+      await ctx.runMutation(api.audioTranscription.updateTranscriptionSummary, {
+        id: args.transcriptionId,
+        summary: {
+          points: enhancedPoints,
+          generatedAt: Date.now(),
+        },
+      });
+
+      return {
+        success: true,
+        summary: {
+          points: enhancedPoints,
+          generatedAt: Date.now(),
+        },
+      };
+    } catch (error: any) {
+      console.error("Summary generation error:", error);
+      return {
+        success: false,
+        error: error.message || "Failed to generate summary",
+      };
+    }
+  },
+});
+
+// Helper function to format timestamp
+function formatTimestamp(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
 
 // Update transcription status
 export const updateTranscriptionStatus = mutation({
@@ -247,6 +419,81 @@ export const getTranscriptionsByResume = query({
 
     // Flatten the array
     return allTranscriptions.flat();
+  },
+});
+
+// Get transcription by ID
+export const getTranscriptionById = query({
+  args: {
+    id: v.id("audioTranscriptions"),
+  },
+  handler: async (ctx, args) => {
+    const transcription = await ctx.db.get(args.id);
+    if (!transcription) return null;
+
+    // Get URL for audio file
+    const audioUrl = transcription.storageId
+      ? await ctx.storage.getUrl(transcription.storageId)
+      : null;
+
+    return {
+      ...transcription,
+      audioUrl,
+    };
+  },
+});
+
+// Alias for simpler API access
+export const get = getTranscriptionById;
+
+// Update transcription summary
+export const updateTranscriptionSummary = mutation({
+  args: {
+    id: v.id("audioTranscriptions"),
+    summary: v.object({
+      points: v.array(v.object({
+        text: v.string(),
+        segmentReferences: v.array(v.object({
+          segmentIndex: v.number(),
+          start: v.number(),
+          end: v.number(),
+          originalText: v.string(),
+        })),
+      })),
+      generatedAt: v.number(),
+    }),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, {
+      summary: args.summary,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+// Update display name for a transcription
+export const updateDisplayName = mutation({
+  args: {
+    id: v.id("audioTranscriptions"),
+    displayName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    const transcription = await ctx.db.get(args.id);
+    if (!transcription) {
+      throw new Error("Transcription not found");
+    }
+
+    await ctx.db.patch(args.id, {
+      displayName: args.displayName,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true };
   },
 });
 

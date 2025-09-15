@@ -447,13 +447,6 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
       {/* Editor */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
-          {/* Audio Transcription Block */}
-          <AudioTranscriptionBlock
-            dynamicFileId={fileId}
-            isReadOnly={isReadOnly}
-            autoPlayRequest={autoPlayRequest}
-          />
-
           {/* BlockNote Editor */}
           <BlockNoteView
             editor={editor}
@@ -462,6 +455,13 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
             editable={!isReadOnly}
             formattingToolbar={true}
             linkToolbar={true}
+          />
+
+          {/* Audio Transcription Block - always below */}
+          <AudioTranscriptionBlock
+            dynamicFileId={fileId}
+            isReadOnly={isReadOnly}
+            autoPlayRequest={autoPlayRequest}
           />
         </div>
       </div>

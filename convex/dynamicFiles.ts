@@ -75,7 +75,7 @@ export const getPublicPageContent = query({
       .withIndex("by_file", (q) => q.eq("fileId", page._id))
       .first();
 
-    // Get audio transcriptions for this page
+    // Get echoes for this page
     const transcriptions = await ctx.db
       .query("audioTranscriptions")
       .withIndex("by_dynamic_file", (q) => q.eq("dynamicFileId", page._id))
@@ -85,27 +85,32 @@ export const getPublicPageContent = query({
     // Format content with transcriptions included
     let enhancedContent = content?.content || null;
 
-    // If there are transcriptions, append them to the content for AI visibility
+    // If there are echoes, append them to the content for AI visibility
     if (transcriptions.length > 0 && enhancedContent) {
-      // Add transcriptions as a special section that the AI can see
+      // Add ONLY echo points to the content that AI can see (no full transcripts)
+      let globalPointCounter = 0; // Track point numbers across all echoes
+
       const transcriptionSection = transcriptions.map((t, index) => {
-        // If segments exist, format with timestamps for each segment
-        if (t.segments && t.segments.length > 0) {
-          const segmentContent = t.segments.map((seg: any, segIdx: number) => ({
-            type: "text",
-            text: `\n[TS${segIdx+1}:${Math.floor(seg.start)}s] ${seg.text}`,
-            styles: {}
-          }));
+        // Only include summary, never the full transcript
+        if (t.summary && t.summary.points) {
+          const summaryContent = t.summary.points.map((point: any, pIdx: number) => {
+            globalPointCounter++; // Increment for each point
+            return {
+              type: "text",
+              text: `\n[Echo P${globalPointCounter}] ${point.text}`,
+              styles: {}
+            };
+          });
 
           return {
             type: "paragraph",
             content: [
               {
                 type: "text",
-                text: `\n[Audio Transcription ${index + 1}: ${t.fileName} AudioID:${t._id}]`,
+                text: `\n[Echo: ${t.displayName || t.fileName}]`,
                 styles: { bold: true }
               },
-              ...segmentContent,
+              ...summaryContent,
               ...(t.language ? [{
                 type: "text",
                 text: `\n(Language: ${t.language}${t.duration ? `, Duration: ${Math.round(t.duration)}s` : ''})`,
@@ -114,25 +119,20 @@ export const getPublicPageContent = query({
             ]
           };
         } else {
-          // Fallback to full transcription without timestamps
+          // If no summary yet, just note the file exists but is processing
           return {
             type: "paragraph",
             content: [
               {
                 type: "text",
-                text: `\n[Audio Transcription ${index + 1}: ${t.fileName} AudioID:${t._id}]`,
-                styles: { bold: true }
+                text: `\n[Echo Processing: ${t.displayName || t.fileName}]`,
+                styles: { italic: true }
               },
               {
                 type: "text",
-                text: `\n${t.transcription}`,
-                styles: {}
-              },
-              ...(t.language ? [{
-                type: "text",
-                text: `\n(Language: ${t.language}${t.duration ? `, Duration: ${Math.round(t.duration)}s` : ''})`,
+                text: "\n(Echo being generated...)",
                 styles: { italic: true }
-              }] : [])
+              }
             ]
           };
         }
@@ -142,19 +142,28 @@ export const getPublicPageContent = query({
       if (Array.isArray(enhancedContent)) {
         enhancedContent = [...enhancedContent, ...transcriptionSection];
       } else if (typeof enhancedContent === 'string') {
-        // If content is a string, append as text with timestamps
+        // If content is a string, append ONLY summaries as text
+        let globalPointCounter = 0; // Track point numbers across all echoes
+
         const transcriptionText = transcriptions.map((t, index) => {
-          if (t.segments && t.segments.length > 0) {
-            const segmentText = t.segments.map((seg: any, segIdx: number) =>
-              `[T${segIdx+1}:${Math.floor(seg.start)}s] ${seg.text}`
-            ).join('\n');
-            return `\n\n[Audio Transcription ${index + 1}: ${t.fileName} AudioID:${t._id}]\n${segmentText}${
-              t.language ? `\n(Language: ${t.language}${t.duration ? `, Duration: ${Math.round(t.duration)}s` : ''})` : ''
-            }`;
+          if (t.summary && t.summary.points) {
+            let text = `\n\n[Echo: ${t.displayName || t.fileName}]`;
+
+            // Add summary points with continuous numbering
+            t.summary.points.forEach((point: any, pIdx: number) => {
+              globalPointCounter++;
+              text += `\n[Echo P${globalPointCounter}] ${point.text}`;
+            });
+
+            // Add language and duration
+            if (t.language) {
+              text += `\n(Language: ${t.language}${t.duration ? `, Duration: ${Math.round(t.duration)}s` : ''})`;
+            }
+
+            return text;
           } else {
-            return `\n\n[Audio Transcription ${index + 1}: ${t.fileName} AudioID:${t._id}]\n${t.transcription}${
-              t.language ? `\n(Language: ${t.language}${t.duration ? `, Duration: ${Math.round(t.duration)}s` : ''})` : ''
-            }`;
+            // If no summary yet, just note the file exists
+            return `\n\n[Echo Processing: ${t.displayName || t.fileName}]\n(Echo being generated...)`;
           }
         }).join('');
         enhancedContent = enhancedContent + transcriptionText;

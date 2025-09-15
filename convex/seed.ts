@@ -161,7 +161,7 @@ export const createMockResume = mutation({
       type: "text",
       position: 1,
       bulletPointId: bullet2_1,
-      content: "Developed Spark Structured Streaming jobs for feature engineering, computing rolling windows and aggregations over 30+ features in real-time with watermarking for late data handling.",
+      content: "Pioneered advanced feature engineering approach computing 30+ real-time behavioral signals including velocity checks, geo-location anomalies, and device fingerprinting - going beyond traditional rule-based systems to capture subtle fraud patterns that reduced manual review queues by 40%.",
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
@@ -213,7 +213,7 @@ export const createMockResume = mutation({
 
     const bullet2_4 = await ctx.db.insert("bulletPoints", {
       projectId: project2Id,
-      content: "Reduced false positives by 35% through advanced feature engineering",
+      content: "Achieved industry-leading 35% false positive reduction while maintaining 99.2% fraud catch rate",
       position: 3,
       hasBranches: true,
       createdAt: Date.now(),
@@ -224,7 +224,7 @@ export const createMockResume = mutation({
       type: "text",
       position: 0,
       bulletPointId: bullet2_4,
-      content: "Created behavioral biometrics features analyzing typing patterns, mouse movements, and device fingerprinting. Used graph-based features to detect fraud rings by analyzing transaction networks.",
+      content: "Transformed fraud detection accuracy by introducing behavioral biometrics and graph-based network analysis - a departure from traditional transaction-only models. This holistic approach identified sophisticated fraud rings that previous rule-based systems missed, saving $2M+ annually in false decline losses while improving customer experience.",
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });

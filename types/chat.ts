@@ -9,6 +9,7 @@ export interface Citation {
   timestamp?: number; // For audio citations - timestamp in seconds
   audioId?: string;   // For audio citations - the audio transcription ID
   audioFileName?: string; // For audio citations - the filename
+  fullText?: string; // For echo citations - the full context text
 }
 
 export interface CustomUIMessage extends UIMessage {
