@@ -26,9 +26,9 @@ export const scrapePortfolio = action({
       // Create Firecrawl client
       const app = new Firecrawl({ apiKey: firecrawlApiKey });
 
-      // Scrape the portfolio website
+      // Scrape the portfolio website with summary format only
       const scrapeResponse = await app.scrape(args.url, {
-        formats: ['markdown' as any],
+        formats: (args.formats as any) || ['summary' as any],
         onlyMainContent: true,
         waitFor: 2000, // Wait for dynamic content
       });
@@ -41,7 +41,7 @@ export const scrapePortfolio = action({
         url: args.url,
         title: scrapeResponse.metadata?.title || "Portfolio",
         description: scrapeResponse.metadata?.description || null,
-        content: scrapeResponse.markdown || "",
+        summary: scrapeResponse.summary || "", // Primary output is now summary
         links: scrapeResponse.links || [],
         metadata: {
           ogTitle: scrapeResponse.metadata?.ogTitle,
