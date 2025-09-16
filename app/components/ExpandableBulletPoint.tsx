@@ -2,7 +2,7 @@
 
 import { Id } from "../../convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
-import { BulletPointExpandedModal } from "./BulletPointExpandedModal";
+import BulletPointExpandedModal from "./BulletPointExpandedModal";
 import ShinyText from "@/components/ShinyText";
 import { useState } from "react";
 

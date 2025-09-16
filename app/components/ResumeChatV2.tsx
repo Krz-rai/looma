@@ -1,32 +1,35 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, UIMessage, ToolUIPart, TextUIPart, ReasoningUIPart } from 'ai';
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
+import { MarkdownRenderer } from './MarkdownRenderer';
 import { Button } from "@/components/ui/button";
 // AI elements UI kit
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageContent } from "@/components/ai-elements/message";
 import { Loader } from "@/components/ai-elements/loader";
-// Removed prompt-input imports since we're using custom input
-import { Suggestions, Suggestion } from "@/components/ai-elements/suggestion";
+import { Source, Sources, SourcesContent, SourcesTrigger } from "@/components/ai-elements/sources";
+// Using custom markdown renderer instead of Response component
 import { Reasoning, ReasoningTrigger, ReasoningContent } from "@/components/ai-elements/reasoning";
 import {
-  ChainOfThought,
-  ChainOfThoughtHeader,
-  ChainOfThoughtStep,
-  ChainOfThoughtContent
-} from "@/components/ai-elements/chain-of-thought";
-import { GlobeIcon, CopyIcon, RefreshCwIcon, Edit2Icon, CheckIcon, BotIcon, UserIcon, XIcon, SearchIcon, FileTextIcon, Globe2Icon, BrainCircuitIcon, ArrowUpIcon } from "lucide-react";
+  Task,
+  TaskContent,
+  TaskItem,
+  TaskTrigger,
+} from '@/components/ai-elements/task';
+import { CopyIcon, RefreshCwIcon, Edit2Icon, CheckIcon, BotIcon, UserIcon, XIcon, ArrowUpIcon, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CitationTooltip } from "@/components/ui/citation-tooltip";
 import { EchoCitationTooltip } from "@/components/ui/echo-citation-tooltip";
 import { parseCitations } from '@/lib/citation-parser';
 import { postProcessResponse } from '@/lib/response-formatter';
+import { validateAndCleanCitations } from '@/lib/citation-validator';
 import { IdMapping } from '@/types/chat';
+import type { Citation } from '@/types/chat';
 
 const convexSiteUrl = process.env.NEXT_PUBLIC_CONVEX_URL?.replace(
   /.cloud$/,
@@ -73,7 +76,413 @@ interface ResumeChatProps {
   }> };
 }
 
-// Simple Message Content Component (rich text + inline citations)
+// Enhanced Custom Markdown Renderer with Citation Support
+function CustomMarkdownRenderer({
+  content,
+  citations,
+  onCitationClick,
+  projects,
+  bulletPointsByProject,
+  dynamicFiles,
+  audioTranscriptions
+}: {
+  content: string;
+  citations: Citation[];
+  onCitationClick?: (type: string, id: string, text: string) => void;
+  projects?: Array<{
+    _id: string;
+    title: string;
+    description?: string;
+    [key: string]: unknown;
+  }>;
+  bulletPointsByProject?: { [key: string]: Array<{
+    _id: string;
+    content: string;
+    [key: string]: unknown;
+  }> };
+  dynamicFiles?: Array<{
+    _id: string;
+    title: string;
+    [key: string]: unknown;
+  }>;
+  audioTranscriptions?: Array<{
+    _id: string;
+    dynamicFileId: string;
+    fileName: string;
+    transcription: string;
+    segments?: Array<{
+      text: string;
+      start: number;
+      end: number;
+    }>;
+    summary?: {
+      points: Array<{
+        text: string;
+        segmentReferences?: Array<{
+          segmentIndex: number;
+          start: number;
+          end: number;
+          originalText: string;
+        }>;
+      }>;
+      generatedAt: number;
+    };
+  }>;
+}) {
+  // Render citation component
+  const renderCitation = (match: RegExpExecArray): React.ReactNode => {
+    const index = parseInt(match[1]);
+    const citation = citations[index];
+    if (!citation) return null;
+
+    const citationCounter = index + 1;
+
+    // Handle different citation types with appropriate components
+    if (citation.type === 'echo' || citation.type === 'audio-summary') {
+      // Handle echo/audio summary citations
+      const pointNumber = citation.timestamp; // Point number is stored in timestamp field
+
+      // Find the actual echo content from audioTranscriptions
+      let echoContent = undefined;
+      if (audioTranscriptions && pointNumber) {
+        // Get all transcriptions for this page
+        const pageTranscriptions = audioTranscriptions.filter(t => t.dynamicFileId === citation.convexId);
+
+        // Calculate which transcription and point within that transcription
+        let globalPointCounter = 0;
+        for (const trans of pageTranscriptions) {
+          if (trans.summary && trans.summary.points) {
+            for (const point of trans.summary.points) {
+              globalPointCounter++;
+              if (globalPointCounter === pointNumber) {
+                echoContent = point.text;
+                break;
+              }
+            }
+            if (echoContent) break;
+          }
+        }
+      }
+
+      // Use the found echo content, or fall back to citation text
+      const tooltipContent = echoContent || citation.fullText || citation.text;
+
+      return (
+        <EchoCitationTooltip
+          key={`citation-${index}`}
+          pointNumber={pointNumber || 0}
+          content={tooltipContent}
+        >
+          <span
+            className="inline-flex items-center justify-center cursor-pointer ml-1 mr-0.5 px-1.5 min-w-[18px] h-[18px] rounded-md bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-[10px] font-medium text-neutral-700 dark:text-neutral-300 transition-all duration-200 hover:scale-105 align-baseline relative -top-[1px]"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onCitationClick) {
+                // Navigate to the page
+                onCitationClick('page', citation.convexId, citation.text);
+                // After navigation, find and highlight the specific audio summary point
+                setTimeout(() => {
+                  // Remove any existing persistent highlights first
+                  document.querySelectorAll('.highlight-persistent').forEach(el => {
+                    el.classList.remove('highlight-persistent');
+                  });
+
+                  // Find all echo elements on the page
+                  const summaryElements = document.querySelectorAll(`[id^="echo-point-"], [id^="audio-summary-point-"]`);
+
+                  // Look for the element with the matching point number
+                  summaryElements.forEach((element) => {
+                    const elementId = element.id;
+                    // Extract point number from ID (format: echo-point-{audioId}-{pointNumber} or audio-summary-point-{audioId}-{pointNumber})
+                    const match = elementId.match(/(?:echo|audio-summary)-point-.*-(\d+)$/);
+                    if (match && parseInt(match[1]) === pointNumber) {
+                      // Found the matching element
+                      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      // Add persistent highlight
+                      element.classList.add('highlight-persistent');
+                    }
+                  });
+                }, 800); // Slightly longer delay to ensure page loads
+              }
+            }}
+            data-citation-type="echo"
+            data-citation-id={citation.simpleId}
+            data-point-number={pointNumber}
+          >
+            {citationCounter}
+          </span>
+        </EchoCitationTooltip>
+      );
+    } else if (citation.type === 'page') {
+      const page = dynamicFiles?.find(f => f._id === citation.convexId);
+      return (
+        <PageCitation
+          key={`citation-${index}`}
+          text={citation.text}
+          id={citation.convexId}
+          num={citationCounter}
+          onClick={() => onCitationClick?.(citation.type, citation.convexId, citation.text)}
+          page={page}
+        />
+      );
+    } else {
+      return (
+        <Citation
+          key={`citation-${index}`}
+          type={citation.type}
+          text={citation.text}
+          id={citation.convexId}
+          num={citationCounter}
+          onClick={() => onCitationClick?.(citation.type, citation.convexId, citation.text)}
+          projects={projects}
+          bulletPointsByProject={bulletPointsByProject}
+        />
+      );
+    }
+  };
+
+  return (
+    <MarkdownRenderer
+      content={content}
+      renderCitation={renderCitation}
+      className="text-sm leading-relaxed"
+    />
+  );
+}
+
+// Message with Sources Component
+interface MessageWithSourcesProps {
+  message: UIMessage;
+  textPart: TextUIPart;
+  messageIndex: number;
+  isLastMessage: boolean;
+  editingMessageId: string | null;
+  editedText: string;
+  setEditedText: (text: string) => void;
+  handleSaveEdit: (index: number) => void;
+  handleCancelEdit: () => void;
+  handleCopyMessage: (id: string, content: string) => void;
+  copiedMessageId: string | null;
+  handleEditMessage: (index: number, text: string) => void;
+  handleRegenerateResponse: () => void;
+  messageMetrics: Record<string, { startTime: number; endTime?: number; tokenEstimate?: number }>;
+  _onCitationClick?: (type: string, id: string, text: string) => void;
+  idMapping: IdMapping;
+  projects?: Array<{ _id: string; title: string; [key: string]: unknown }>;
+  bulletPointsByProject?: Record<string, Array<{ _id: string; content: string; [key: string]: unknown }>>;
+  dynamicFiles?: Array<{ _id: string; title: string; [key: string]: unknown }>;
+  audioTranscriptions?: Array<{
+    _id: string;
+    dynamicFileId: string;
+    fileName: string;
+    transcription: string;
+    segments?: Array<{
+      text: string;
+      start: number;
+      end: number;
+    }>;
+    summary?: {
+      points: Array<{
+        text: string;
+        segmentReferences?: Array<{
+          segmentIndex: number;
+          start: number;
+          end: number;
+          originalText: string;
+        }>;
+      }>;
+      generatedAt: number;
+    };
+  }>;
+}
+
+function MessageWithSources({
+  message,
+  textPart,
+  messageIndex,
+  isLastMessage,
+  editingMessageId,
+  editedText,
+  setEditedText,
+  handleSaveEdit,
+  handleCancelEdit,
+  handleCopyMessage,
+  copiedMessageId,
+  handleEditMessage,
+  handleRegenerateResponse,
+  messageMetrics,
+  _onCitationClick,
+  idMapping,
+  projects,
+  bulletPointsByProject,
+  dynamicFiles,
+  audioTranscriptions
+}: MessageWithSourcesProps) {
+  const [messageCitations, setMessageCitations] = useState<Citation[]>([]);
+  const messageText = textPart.text.replace(/^\s*\n+/, '').trimStart();
+  const isEditing = editingMessageId === `${messageIndex}`;
+
+  // Extract unique sources from citations
+  const uniqueSources = useMemo(() => {
+    const sourcesMap = new Map<string, { id: string; title: string; type: string }>();
+
+    messageCitations.forEach(citation => {
+      if (citation.type === 'page' && dynamicFiles) {
+        const page = dynamicFiles.find((f) => f._id === citation.convexId);
+        if (page && !sourcesMap.has(page._id)) {
+          sourcesMap.set(page._id, {
+            id: page._id,
+            title: page.title,
+            type: 'page'
+          });
+        }
+      } else if (citation.type === 'project' && projects) {
+        const project = projects.find((p) => p._id === citation.convexId);
+        if (project && !sourcesMap.has(project._id)) {
+          sourcesMap.set(project._id, {
+            id: project._id,
+            title: project.title,
+            type: 'project'
+          });
+        }
+      }
+    });
+
+    return Array.from(sourcesMap.values());
+  }, [messageCitations, dynamicFiles, projects]);
+
+  return (
+    <div className="flex flex-col group">
+      <Message from={message.role} className="py-4">
+        <MessageContent
+          variant="flat"
+          className={cn(
+            "relative",
+            message.role === "assistant" && "bg-neutral-50 dark:bg-neutral-900/50 rounded-lg px-4 py-3"
+          )}
+        >
+          {isEditing && message.role === "user" ? (
+            <div className="flex flex-col gap-2">
+              <textarea
+                value={editedText}
+                onChange={(e) => setEditedText(e.target.value)}
+                className="w-full p-3 text-sm bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-neutral-900/10 dark:focus:ring-white/10"
+                rows={3}
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => handleSaveEdit(messageIndex)}>
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={handleCancelEdit}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : message.role === "user" ? (
+            <p className="text-sm text-neutral-900 dark:text-neutral-100">{messageText}</p>
+          ) : (
+            <RichMessageContent
+              content={messageText}
+              onCitationClick={_onCitationClick}
+              idMapping={idMapping}
+              projects={projects}
+              bulletPointsByProject={bulletPointsByProject}
+              dynamicFiles={dynamicFiles}
+              audioTranscriptions={audioTranscriptions}
+              onCitationsParsed={setMessageCitations}
+            />
+          )}
+        </MessageContent>
+        <div className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-full bg-neutral-100 dark:bg-neutral-800 ring-1 ring-neutral-200 dark:ring-neutral-700">
+          {message.role === "user" ? (
+            <UserIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-400" />
+          ) : (
+            <BotIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-400" />
+          )}
+        </div>
+      </Message>
+
+      {/* Sources component for assistant messages */}
+      {message.role === "assistant" && uniqueSources.length > 0 && (
+        <div className="pl-[51px] -mt-2 mb-2">
+          <Sources>
+            <SourcesTrigger count={uniqueSources.length} />
+            <SourcesContent>
+              {uniqueSources.map((source) => (
+                <Source
+                  key={source.id}
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (_onCitationClick) {
+                      _onCitationClick(source.type, source.id, source.title);
+                    }
+                  }}
+                  title={source.title}
+                />
+              ))}
+            </SourcesContent>
+          </Sources>
+        </div>
+      )}
+
+      {/* Message Actions - Below message */}
+      {!isEditing && (
+        <div className={cn(
+          "flex items-center gap-1 -mt-1 mb-2 transition-opacity duration-200",
+          message.role === "assistant" ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          message.role === "user" ? "justify-end pr-[51px]" : "pl-[51px]"
+        )}>
+          <button
+            onClick={() => handleCopyMessage(`${messageIndex}`, messageText)}
+            className="p-1.5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors group/btn"
+            title="Copy"
+          >
+            {copiedMessageId === `${messageIndex}` ? (
+              <CheckIcon className="size-3.5 text-green-600" />
+            ) : (
+              <CopyIcon className="size-3.5 text-neutral-500 group-hover/btn:text-neutral-700 dark:text-neutral-400 dark:group-hover/btn:text-neutral-200" />
+            )}
+          </button>
+          {message.role === "user" && (
+            <button
+              onClick={() => handleEditMessage(messageIndex, messageText)}
+              className="p-1.5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors group/btn"
+              title="Edit message"
+            >
+              <Edit2Icon className="size-3.5 text-neutral-500 group-hover/btn:text-neutral-700 dark:text-neutral-400 dark:group-hover/btn:text-neutral-200" />
+            </button>
+          )}
+          {message.role === "assistant" && isLastMessage && (
+            <button
+              onClick={handleRegenerateResponse}
+              className="p-1.5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors group/btn"
+              title="Regenerate response"
+            >
+              <RefreshCwIcon className="size-3.5 text-neutral-500 group-hover/btn:text-neutral-700 dark:text-neutral-400 dark:group-hover/btn:text-neutral-200" />
+            </button>
+          )}
+          {/* Message Metrics */}
+          {message.role === "assistant" && messageMetrics[message.id] && (
+            <div className="ml-auto flex items-center gap-2 text-xs text-neutral-400 dark:text-neutral-500">
+              {messageMetrics[message.id].tokenEstimate && (
+                <span>~{messageMetrics[message.id].tokenEstimate} tokens</span>
+              )}
+              {messageMetrics[message.id].startTime && messageMetrics[message.id].endTime && (
+                <span>
+                  {((messageMetrics[message.id].endTime! - messageMetrics[message.id].startTime) / 1000).toFixed(1)}s
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Simple Message Content Component (using our custom markdown renderer)
 function RichMessageContent({
   content,
   onCitationClick,
@@ -81,7 +490,8 @@ function RichMessageContent({
   projects,
   bulletPointsByProject,
   dynamicFiles,
-  audioTranscriptions
+  audioTranscriptions,
+  onCitationsParsed
 }: {
   content: string;
   onCitationClick?: (type: string, id: string, text: string) => void;
@@ -125,6 +535,7 @@ function RichMessageContent({
       generatedAt: number;
     };
   }>;
+  onCitationsParsed?: (citations: Citation[]) => void;
 }) {
   const { text, citations } = useMemo(() => {
     console.log('💬 MessageContent: Processing content:', content);
@@ -134,291 +545,41 @@ function RichMessageContent({
     const formattedContent = postProcessResponse(content);
     console.log('💬 MessageContent: Formatted content:', formattedContent);
 
+    // Validate and clean citations before parsing
+    const cleanedContent = validateAndCleanCitations(formattedContent, idMapping || { forward: {}, reverse: {} });
+    if (cleanedContent !== formattedContent) {
+      console.warn('💬 MessageContent: Citations were cleaned/validated');
+    }
+
     // Then parse citations
-    const result = parseCitations(formattedContent, idMapping || { forward: {}, reverse: {} });
+    const result = parseCitations(cleanedContent, idMapping || { forward: {}, reverse: {} });
     console.log('💬 MessageContent: Parse result:', result);
 
     return result;
   }, [content, idMapping]);
 
-  // Parse text and create elements with citations
-  const parts = [];
-  let lastIndex = 0;
-
-  // Track citation numbers
-  let citationCounter = 0;
-
-  // Process citation markers
-  const citationPattern = /\{\{citation:(\d+)\}\}/g;
-  let match;
-
-  console.log('💬 Looking for citation markers in text length:', text.length);
-  console.log('💬 Text preview:', text.substring(0, 200));
-
-  while ((match = citationPattern.exec(text)) !== null) {
-    // Add text before citation
-    if (match.index > lastIndex) {
-      parts.push(text.substring(lastIndex, match.index));
+  // Notify parent about citations
+  useEffect(() => {
+    if (onCitationsParsed && citations.length > 0) {
+      onCitationsParsed(citations);
     }
+  }, [citations, onCitationsParsed]);
 
-    const citationIndex = parseInt(match[1]);
-    const citation = citations[citationIndex];
-
-    console.log('💬 Processing citation:', {
-      citationIndex,
-      citation,
-      match: match[0]
-    });
-
-    if (citation) {
-      citationCounter++;
-      const num = citationCounter;
-
-      // Add citation element - use PageCitation for pages, Echo for echo
-      if (citation.type === 'echo' || citation.type === 'audio-summary') {
-        // Handle audio summary citations
-        const pointNumber = citation.timestamp; // Point number is stored in timestamp field
-
-        // Find the actual echo content from audioTranscriptions
-        let echoContent = undefined;
-        if (audioTranscriptions && pointNumber) {
-          // Get all transcriptions for this page
-          const pageTranscriptions = audioTranscriptions.filter(t => t.dynamicFileId === citation.convexId);
-
-          // Calculate which transcription and point within that transcription
-          let globalPointCounter = 0;
-          for (const trans of pageTranscriptions) {
-            if (trans.summary && trans.summary.points) {
-              for (const point of trans.summary.points) {
-                globalPointCounter++;
-                if (globalPointCounter === pointNumber) {
-                  echoContent = point.text;
-                  break;
-                }
-              }
-              if (echoContent) break;
-            }
-          }
-        }
-
-        // Use the found echo content, or fall back to fullText if provided
-        const tooltipContent = echoContent || citation.fullText;
-
-        parts.push(
-          <EchoCitationTooltip
-            key={`echo-${citation.simpleId}-${match.index}`}
-            pointNumber={pointNumber || 0}
-            content={tooltipContent}
-          >
-            <span
-              className="inline-flex items-center justify-center cursor-pointer ml-1 mr-0.5 px-1.5 min-w-[18px] h-[18px] rounded-md bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-[10px] font-medium text-neutral-700 dark:text-neutral-300 transition-all duration-200 hover:scale-105 align-baseline relative -top-[1px]"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onCitationClick) {
-                  // Navigate to the page
-                  onCitationClick('page', citation.convexId, citation.text);
-                  // After navigation, find and highlight the specific audio summary point
-                  setTimeout(() => {
-                    // Remove any existing persistent highlights first
-                    document.querySelectorAll('.highlight-persistent').forEach(el => {
-                      el.classList.remove('highlight-persistent');
-                    });
-
-                    // Find all echo elements on the page
-                    const summaryElements = document.querySelectorAll(`[id^="echo-point-"], [id^="audio-summary-point-"]`);
-
-                    // Look for the element with the matching point number
-                    summaryElements.forEach((element) => {
-                      const elementId = element.id;
-                      // Extract point number from ID (format: echo-point-{audioId}-{pointNumber} or audio-summary-point-{audioId}-{pointNumber})
-                      const match = elementId.match(/(?:echo|audio-summary)-point-.*-(\d+)$/);
-                      if (match && parseInt(match[1]) === pointNumber) {
-                        // Found the matching element
-                        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        // Add persistent highlight
-                        element.classList.add('highlight-persistent');
-                      }
-                    });
-                  }, 800); // Slightly longer delay to ensure page loads
-                }
-              }}
-              data-citation-type="echo"
-              data-citation-id={citation.simpleId}
-              data-point-number={pointNumber}
-            >
-              {num}
-            </span>
-          </EchoCitationTooltip>
-        );
-      } else if (citation.type === 'audio') {
-        // Extract filename and timestamp from text
-        const fileName = citation.audioFileName || citation.text.split(' T')[0];
-        const timestamp = citation.timestamp || 0;
-
-        // Find the transcription segment for this citation
-        let segmentText = '';
-        if (audioTranscriptions && citation.convexId && fileName) {
-          // Find the transcription for this page and file
-          const transcription = audioTranscriptions.find(t =>
-            t.dynamicFileId === citation.convexId &&
-            t.fileName === fileName
-          );
-
-          if (transcription?.segments) {
-            // Find the segment that starts at or just before this timestamp
-            // Sort segments by start time to ensure proper ordering
-            const sortedSegments = [...transcription.segments].sort((a, b) => a.start - b.start);
-
-            // Find the segment that best matches this timestamp
-            let bestSegment = null;
-            for (let i = 0; i < sortedSegments.length; i++) {
-              const segment = sortedSegments[i];
-              const nextSegment = sortedSegments[i + 1];
-
-              // If timestamp exactly matches the start, use this segment
-              if (timestamp === segment.start) {
-                bestSegment = segment;
-                break;
-              }
-
-              // If timestamp is within this segment's range
-              if (timestamp >= segment.start && timestamp < segment.end) {
-                bestSegment = segment;
-                break;
-              }
-
-              // If this is the last segment and timestamp is after its start
-              if (!nextSegment && timestamp >= segment.start) {
-                bestSegment = segment;
-                break;
-              }
-            }
-
-            if (bestSegment) {
-              segmentText = bestSegment.text;
-            }
-          }
-        }
-
-        // Use segment text if found, otherwise show filename and timestamp
-        const displayText = segmentText ? `"${segmentText}"` : `${fileName} at ${timestamp}s`;
-
-        parts.push(
-          <CitationTooltip
-            key={`audio-${citation.simpleId}-${match.index}`}
-            source="Audio"
-            content={displayText}
-          >
-            <span
-              className="inline-flex items-center justify-center cursor-pointer ml-1 mr-0.5 px-1.5 min-w-[18px] h-[18px] rounded-md bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-[10px] font-medium text-neutral-700 dark:text-neutral-300 transition-all duration-200 hover:scale-105 align-baseline relative -top-[1px]"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onCitationClick) {
-                  // For audio citations, pass page ID, filename, and timestamp
-                  // Format: "audio:<pageConvexId>:<filename>:<timestamp>"
-                  const audioData = `audio:${citation.convexId}:${fileName}:${timestamp}`;
-                  onCitationClick('audio', audioData, citation.text);
-                }
-              }}
-              data-citation-type="audio"
-              data-citation-id={citation.simpleId}
-              data-timestamp={timestamp}
-            >
-              {num}
-            </span>
-          </CitationTooltip>
-        );
-      } else if (citation.type === 'page') {
-        const page = dynamicFiles?.find(f => f._id === citation.convexId);
-        parts.push(
-          <PageCitation
-            key={`page-${citation.convexId}-${match.index}`}
-            text={citation.text}
-            id={citation.convexId}
-            num={num}
-            page={page}
-            onClick={() => {
-              if (onCitationClick) {
-                onCitationClick(citation.type, citation.convexId, citation.text);
-              }
-            }}
-          />
-        );
-      } else {
-        parts.push(
-          <Citation
-            key={`${citation.type}-${citation.convexId}-${match.index}`}
-            type={citation.type}
-            text={citation.text}
-            id={citation.convexId}
-            num={num}
-            projects={projects}
-            bulletPointsByProject={bulletPointsByProject}
-            onClick={() => {
-              if (onCitationClick) {
-                onCitationClick(citation.type, citation.convexId, citation.text);
-              }
-            }}
-          />
-        );
-      }
-    }
-
-    lastIndex = match.index + match[0].length;
-  }
-
-  // Add remaining text
-  if (lastIndex < text.length) {
-    parts.push(text.substring(lastIndex));
-  }
-
-  // Format text parts - ensure everything stays inline
-  const formattedParts = parts.map((part, i) => {
-    if (typeof part === 'string') {
-      // Wrap text in span to ensure inline display
-      return <TextFragment key={i} text={part} />;
-    }
-    return part;
-  });
-
-  // Wrap in a single inline container
-  return <span style={{ display: 'inline' }}>{formattedParts}</span>;
+  // Use our custom markdown renderer with all necessary props for tooltips
+  return (
+    <CustomMarkdownRenderer
+      content={text}
+      citations={citations}
+      onCitationClick={onCitationClick}
+      projects={projects}
+      bulletPointsByProject={bulletPointsByProject}
+      dynamicFiles={dynamicFiles}
+      audioTranscriptions={audioTranscriptions}
+    />
+  );
 }
 
-// Simple Text Fragment Component
-function TextFragment({ text }: { text: string }) {
-  // Check if this text contains paragraph breaks
-  if (text.includes('\n\n')) {
-    // Split by double newlines for paragraphs
-    const paragraphs = text.split(/\n\n+/);
-    return (
-      <>
-        {paragraphs.map((p, i) => {
-          // Format markdown in each paragraph - preserve line breaks
-          const formatted = p.replace(/\n/g, '<br/>') // Preserve line breaks within paragraphs
-            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-            .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-            .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-muted/50 text-xs font-mono text-foreground/90">$1</code>');
-
-          if (i < paragraphs.length - 1) {
-            // Add spacing between paragraphs
-            return <span key={i}><span dangerouslySetInnerHTML={{ __html: formatted }} /><br /><br /></span>;
-          }
-          return <span key={i} dangerouslySetInnerHTML={{ __html: formatted }} />;
-        })}
-      </>
-    );
-  }
-
-  // Handle single line breaks as <br/> for proper formatting
-  const formattedText = text
-    .replace(/\n/g, '<br/>')  // Keep line breaks for proper bullet formatting
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-muted/50 text-xs font-mono text-foreground/90">$1</code>');
-
-  return <span dangerouslySetInnerHTML={{ __html: formattedText }} />;
-}
+// TextFragment component removed - now using Response component directly
 
 
 // Page Citation Component with content fetching
@@ -637,7 +798,7 @@ function Citation({ type, text, id, num, onClick, projects, bulletPointsByProjec
   );
 }
 
-export function ResumeChatV2({ resumeId, className, onCitationClick, projects, bulletPointsByProject, dynamicFiles, branchesByBulletPoint }: ResumeChatProps) {
+export function ResumeChatV2({ resumeId, className, onCitationClick: _onCitationClick, projects, bulletPointsByProject, dynamicFiles, branchesByBulletPoint }: ResumeChatProps) {
   // Fetch audio transcriptions for this resume
   const audioTranscriptions = useQuery(api.audioTranscription.getTranscriptionsByResume, {
     resumeId
@@ -700,23 +861,13 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
   }, [projects, bulletPointsByProject, dynamicFiles, branchesByBulletPoint]);
 
   const [input, setInput] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Always use GPT-OSS-120B for all chats
   // Web search is always enabled
   const webSearch = true;
 
 
-  const initialMessages: UIMessage[] = [
-    {
-      id: 'welcome',
-      role: 'assistant',
-      parts: [
-        {
-          type: 'text',
-          text: 'Ask me about this resume.',
-        },
-      ],
-    },
-  ];
+  const initialMessages: UIMessage[] = [];
 
   // Models available
   // GPT-OSS-120B is the only model we use
@@ -806,9 +957,10 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
   // The backend will need to send the mapping as part of the streamed message
 
   const suggestedQuestions = [
-    "Summarize this resume",
-    "What technologies are used?",
-    "Key achievements?"
+    "Give me an overview of this candidate",
+    "What are their key technical skills?",
+    "What's their work experience like?",
+    "What are their main achievements?"
   ];
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -819,6 +971,11 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
     // sendMessage handles message creation internally
     sendMessage({ text: input });
     setInput('');
+    // Reset textarea height after clearing
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = '48px';
+    }
   };
 
   const handleSuggestedQuestion = async (question: string) => {
@@ -843,24 +1000,26 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
       // Find the last user message
       const lastUserMessageIndex = messages.findLastIndex(m => m.role === 'user');
       if (lastUserMessageIndex !== -1) {
-        // Remove all messages after the last user message (assistant responses)
-        const messagesToKeep = messages.slice(0, lastUserMessageIndex);
         const lastUserMessage = messages[lastUserMessageIndex];
         const userTextPart = lastUserMessage.parts?.find((p): p is TextUIPart => p.type === 'text');
 
         if (userTextPart?.text) {
-          // Clear metrics for removed messages
-          const removedMessages = messages.slice(lastUserMessageIndex + 1);
+          // Clear metrics for removed messages (including the user message and all after)
+          const removedMessages = messages.slice(lastUserMessageIndex);
           setMessageMetrics(prev => {
             const newMetrics = { ...prev };
             removedMessages.forEach(msg => delete newMetrics[msg.id]);
             return newMetrics;
           });
 
-          // Clear the assistant messages and immediately resend
+          // Remove the last user message and all messages after it
+          // sendMessage will add the user message back
+          const messagesToKeep = messages.slice(0, lastUserMessageIndex);
           setMessages(messagesToKeep);
-          // Send the message directly without the user message in history
-          sendMessage({ text: userTextPart.text });
+          // Small delay to ensure state update
+          setTimeout(() => {
+            sendMessage({ text: userTextPart.text });
+          }, 50);
         }
       }
     }
@@ -873,12 +1032,25 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
 
   const handleSaveEdit = (messageIndex: number) => {
     if (editedText && status !== 'submitted' && status !== 'streaming') {
-      // Clear messages after this point and send edited message
+      // Clear messages after this point
       const messagesToKeep = messages.slice(0, messageIndex);
+
+      // Clear metrics for removed messages
+      const removedMessages = messages.slice(messageIndex);
+      setMessageMetrics(prev => {
+        const newMetrics = { ...prev };
+        removedMessages.forEach(msg => delete newMetrics[msg.id]);
+        return newMetrics;
+      });
+
       setMessages(messagesToKeep);
-      sendMessage({ text: editedText });
       setEditingMessageId(null);
       setEditedText("");
+
+      // Small delay to ensure state update before sending new message
+      setTimeout(() => {
+        sendMessage({ text: editedText });
+      }, 50);
     }
   };
 
@@ -887,10 +1059,100 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
     setEditedText("");
   };
 
+  const handleNewChat = () => {
+    // Clear all messages
+    setMessages([]);
+    setMessageMetrics({});
+    setInput('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = '48px';
+    }
+  };
+
   return (
     <div className={cn("flex h-full flex-col bg-white dark:bg-neutral-950", className)}>
+      {/* AI Header */}
+      <div className="border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950">
+        <div className="flex items-center justify-between px-8 py-3">
+          <h1 className="text-lg font-light text-neutral-900 dark:text-neutral-100" style={{
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
+            letterSpacing: '-0.01em'
+          }}>
+            Aurea
+          </h1>
+          <Button
+            onClick={handleNewChat}
+            variant="ghost"
+            size="sm"
+            className="h-8 px-3 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1.5" />
+            New Chat
+          </Button>
+        </div>
+      </div>
       <Conversation className="flex-1 bg-white dark:bg-neutral-950 overflow-hidden min-h-0">
         <ConversationContent className="px-8 py-6 h-full overflow-y-auto">
+          {/* Notion-style greeting when no messages */}
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-full max-w-3xl mx-auto px-4">
+              {/* Simple greeting */}
+              <div className="text-center mb-12">
+                <h1 className="text-3xl font-light text-neutral-800 dark:text-neutral-200 mb-3" style={{
+                  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
+                  letterSpacing: '-0.02em'
+                }}>
+                  How can I help with this resume?
+                </h1>
+                <p className="text-neutral-500 dark:text-neutral-400 text-base font-light">
+                  Ask me anything about the candidate&apos;s experience, skills, or qualifications
+                </p>
+              </div>
+
+              {/* Notion-style suggestions */}
+              <div className="grid grid-cols-2 gap-3 w-full max-w-xl">
+                {suggestedQuestions.map((question, index) => (
+                  <button
+                    key={question}
+                    onClick={() => handleSuggestedQuestion(question)}
+                    className="text-left p-4 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors group"
+                    style={{
+                      opacity: 0,
+                      animation: `fadeIn 0.3s ease-out ${index * 0.1}s forwards`
+                    }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5">
+                        <div className="w-5 h-5 rounded flex items-center justify-center bg-neutral-100 dark:bg-neutral-800 group-hover:bg-neutral-200 dark:group-hover:bg-neutral-700 transition-colors">
+                          <svg className="w-3 h-3 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                          </svg>
+                        </div>
+                      </div>
+                      <span className="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed">
+                        {question}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Add keyframes for animation */}
+              <style jsx>{`
+                @keyframes fadeIn {
+                  from {
+                    opacity: 0;
+                    transform: translateY(10px);
+                  }
+                  to {
+                    opacity: 1;
+                    transform: translateY(0);
+                  }
+                }
+              `}</style>
+            </div>
+          )}
           {messages.map((message) => {
             const parts = message.parts || [];
 
@@ -901,47 +1163,35 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
 
             return (
               <div key={message.id}>
-                {/* Chain of Thought for multiple steps */}
+                {/* Task list for tool steps */}
                 {hasMultipleSteps ? (
-                  <ChainOfThought className="mb-4" defaultOpen={false}>
-                    <ChainOfThoughtHeader>
-                      Chain of Thought ({toolParts.length + reasoningParts.length} steps)
-                    </ChainOfThoughtHeader>
-                    <ChainOfThoughtContent>
+                  <Task className="mb-4" defaultOpen={false}>
+                    <TaskTrigger title={`Tasks (${toolParts.length + reasoningParts.length} steps)`} />
+                    <TaskContent>
                       {/* Tools as steps */}
                       {toolParts.map((toolPart, i: number) => {
-                        // Extract tool name and icon
+                        // Extract tool name for display
                         let displayName = '';
-                        let Icon = SearchIcon;
                         const typeStr = toolPart.type || '';
 
                         if (typeStr.includes('web_search')) {
                           displayName = 'Searching web';
-                          Icon = Globe2Icon;
                         } else if (typeStr.includes('search_content')) {
                           displayName = 'Searching content';
-                          Icon = SearchIcon;
                         } else if (typeStr.includes('search_page_content')) {
                           displayName = 'Reading documentation';
-                          Icon = FileTextIcon;
                         } else if (typeStr.includes('scrape_portfolio')) {
                           displayName = 'Fetching portfolio';
-                          Icon = GlobeIcon;
+                        } else if (typeStr.includes('fetch_resume_data')) {
+                          displayName = 'Getting resume data';
                         }
 
                         if (!displayName) return null;
 
-                        const isComplete = toolPart.state === 'output-available';
-                        const hasError = toolPart.state === 'output-error';
-                        const status = hasError ? 'pending' : isComplete ? 'complete' : 'active';
-
                         return (
-                          <ChainOfThoughtStep
-                            key={`${message.id}-tool-${i}`}
-                            icon={Icon}
-                            label={displayName}
-                            status={status}
-                          />
+                          <TaskItem key={`${message.id}-tool-${i}`}>
+                            {displayName}
+                          </TaskItem>
                         );
                       })}
 
@@ -959,7 +1209,6 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
                         const isReasoningStreaming = status === 'streaming' &&
                                                      message.id === messages.at(-1)?.id &&
                                                      !hasTextPart;
-                        const stepStatus = isReasoningStreaming ? 'active' : 'complete';
 
                         // Simple description based on what we have
                         let description: string | undefined;
@@ -972,29 +1221,19 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
                         }
 
                         return (
-                          <ChainOfThoughtStep
-                            key={`${message.id}-reasoning-${i}`}
-                            icon={BrainCircuitIcon}
-                            label="Reasoning"
-                            description={description}
-                            status={stepStatus}
-                          >
-                            {/* Show full reasoning text if it's not just a duration message */}
+                          <TaskItem key={`${message.id}-reasoning-${i}`}>
+                            Processing{description && description !== 'Complete' ? ` - ${description}` : ''}
+                            {/* Show reasoning text if available and not just duration */}
                             {reasoningPart.text && !isDurationOnly && (
-                              <div className="text-xs text-muted-foreground mt-1 pl-6">
-                                <details className="cursor-pointer">
-                                  <summary className="hover:text-foreground">View reasoning</summary>
-                                  <div className="mt-1 pl-2 border-l-2 border-border">
-                                    {reasoningPart.text}
-                                  </div>
-                                </details>
+                              <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                                {reasoningPart.text.substring(0, 100)}...
                               </div>
                             )}
-                          </ChainOfThoughtStep>
+                          </TaskItem>
                         );
                       })}
-                    </ChainOfThoughtContent>
-                  </ChainOfThought>
+                    </TaskContent>
+                  </Task>
                 ) : (
                   <>
                     {/* Single tool display */}
@@ -1011,6 +1250,8 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
                         displayName = 'Reading documentation';
                       } else if (typeStr.includes('scrape_portfolio')) {
                         displayName = 'Fetching portfolio';
+                      } else if (typeStr.includes('fetch_resume_data')) {
+                        displayName = 'Getting resume data';
                       }
 
                       if (!displayName) return null;
@@ -1019,18 +1260,18 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
                       const hasError = toolPart.state === 'output-error';
 
                       return (
-                        <div key={`${message.id}-tool-${i}`} className="mb-2">
-                          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50 text-xs text-muted-foreground">
+                        <div key={`${message.id}-tool-${i}`} className="mb-2 px-8">
+                          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-xs text-neutral-600 dark:text-neutral-400">
                             {!isComplete && !hasError && (
                               <Loader className="h-3 w-3" />
                             )}
                             {isComplete && !hasError && (
-                              <CheckIcon className="h-3 w-3 text-green-600" />
+                              <CheckIcon className="h-3 w-3 text-green-600 dark:text-green-400" />
                             )}
                             {hasError && (
-                              <XIcon className="h-3 w-3 text-red-600" />
+                              <XIcon className="h-3 w-3 text-red-600 dark:text-red-400" />
                             )}
-                            <span>{displayName}</span>
+                            <span className="font-medium">{displayName}</span>
                           </div>
                         </div>
                       );
@@ -1061,118 +1302,35 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
                 {parts
                   .filter((p): p is TextUIPart => p.type === "text")
                   .map((textPart, i: number) => {
-                  const messageIndex = messages.indexOf(message);
-                  const isLastMessage = messageIndex === messages.length - 1;
-                  // Strip leading empty lines/whitespace from message text
-                  const messageText = textPart.text.replace(/^\s*\n+/, '').trimStart();
-                  const isEditing = editingMessageId === `${messageIndex}`;
+                    const msgIndex = messages.indexOf(message);
+                    const isLastMessage = msgIndex === messages.length - 1;
 
-                  return (
-                    <div key={`${message.id}-text-${i}`} className="flex flex-col group">
-                      <Message from={message.role} className="py-4">
-                        <MessageContent
-                          variant="flat"
-                          className={cn(
-                            "relative",
-                            message.role === "assistant" && "bg-neutral-50 dark:bg-neutral-900/50 rounded-lg px-4 py-3"
-                          )}
-                        >
-                          {isEditing && message.role === "user" ? (
-                            <div className="flex flex-col gap-2">
-                              <textarea
-                                value={editedText}
-                                onChange={(e) => setEditedText(e.target.value)}
-                                className="w-full p-3 text-sm bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-neutral-900/10 dark:focus:ring-white/10"
-                                rows={3}
-                                autoFocus
-                              />
-                              <div className="flex gap-2">
-                                <Button size="sm" onClick={() => handleSaveEdit(messageIndex)}>
-                                  Save
-                                </Button>
-                                <Button size="sm" variant="ghost" onClick={handleCancelEdit}>
-                                  Cancel
-                                </Button>
-                              </div>
-                            </div>
-                          ) : message.role === "user" ? (
-                            <p className="text-sm text-neutral-900 dark:text-neutral-100">{messageText}</p>
-                          ) : (
-                            <div className="text-sm text-neutral-900 dark:text-neutral-100">
-                              <RichMessageContent
-                                content={messageText}
-                                onCitationClick={onCitationClick}
-                                idMapping={idMapping}
-                                projects={projects}
-                                bulletPointsByProject={bulletPointsByProject}
-                                dynamicFiles={dynamicFiles}
-                                audioTranscriptions={audioTranscriptions}
-                              />
-                            </div>
-                          )}
-                        </MessageContent>
-                        <div className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-full bg-neutral-100 dark:bg-neutral-800 ring-1 ring-neutral-200 dark:ring-neutral-700">
-                          {message.role === "user" ? (
-                            <UserIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-400" />
-                          ) : (
-                            <BotIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-400" />
-                          )}
-                        </div>
-                      </Message>
-                      {/* Message Actions - Below message */}
-                      {!isEditing && (
-                        <div className={cn(
-                          "flex items-center gap-1 -mt-1 mb-2 transition-opacity duration-200",
-                          message.role === "assistant" ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-                          message.role === "user" ? "justify-end pr-[51px]" : "pl-[51px]"
-                        )}>
-                          <button
-                            onClick={() => handleCopyMessage(`${messageIndex}`, messageText)}
-                            className="p-1.5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors group/btn"
-                            title="Copy"
-                          >
-                            {copiedMessageId === `${messageIndex}` ? (
-                              <CheckIcon className="size-3.5 text-green-600" />
-                            ) : (
-                              <CopyIcon className="size-3.5 text-neutral-500 group-hover/btn:text-neutral-700 dark:text-neutral-400 dark:group-hover/btn:text-neutral-200" />
-                            )}
-                          </button>
-                          {message.role === "user" && (
-                            <button
-                              onClick={() => handleEditMessage(messageIndex, messageText)}
-                              className="p-1.5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors group/btn"
-                              title="Edit message"
-                            >
-                              <Edit2Icon className="size-3.5 text-neutral-500 group-hover/btn:text-neutral-700 dark:text-neutral-400 dark:group-hover/btn:text-neutral-200" />
-                            </button>
-                          )}
-                          {message.role === "assistant" && isLastMessage && (
-                            <button
-                              onClick={handleRegenerateResponse}
-                              className="p-1.5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors group/btn"
-                              title="Regenerate response"
-                            >
-                              <RefreshCwIcon className="size-3.5 text-neutral-500 group-hover/btn:text-neutral-700 dark:text-neutral-400 dark:group-hover/btn:text-neutral-200" />
-                            </button>
-                          )}
-                          {/* Message Metrics */}
-                          {message.role === "assistant" && messageMetrics[message.id] && (
-                            <div className="ml-auto flex items-center gap-2 text-xs text-neutral-400 dark:text-neutral-500">
-                              {messageMetrics[message.id].tokenEstimate && (
-                                <span>~{messageMetrics[message.id].tokenEstimate} tokens</span>
-                              )}
-                              {messageMetrics[message.id].startTime && messageMetrics[message.id].endTime && (
-                                <span>
-                                  {((messageMetrics[message.id].endTime! - messageMetrics[message.id].startTime) / 1000).toFixed(1)}s
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                    return (
+                      <MessageWithSources
+                        key={`${message.id}-text-${i}`}
+                          message={message}
+                          textPart={textPart}
+                          messageIndex={msgIndex}
+                          isLastMessage={isLastMessage}
+                          editingMessageId={editingMessageId}
+                          editedText={editedText}
+                          setEditedText={setEditedText}
+                          handleSaveEdit={handleSaveEdit}
+                          handleCancelEdit={handleCancelEdit}
+                          handleCopyMessage={handleCopyMessage}
+                          copiedMessageId={copiedMessageId}
+                          handleEditMessage={handleEditMessage}
+                          handleRegenerateResponse={handleRegenerateResponse}
+                          messageMetrics={messageMetrics}
+                          _onCitationClick={_onCitationClick}
+                          idMapping={idMapping}
+                          projects={projects}
+                          bulletPointsByProject={bulletPointsByProject}
+                          dynamicFiles={dynamicFiles}
+                          audioTranscriptions={audioTranscriptions}
+                        />
+                    );
+                  })}
               </div>
             );
           })}
@@ -1183,21 +1341,6 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
             </div>
           )}
 
-          {messages.length === 1 && (
-            <div className="mt-8 px-8">
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3 font-normal">Suggested questions</p>
-              <Suggestions className="gap-2">
-                {suggestedQuestions.map((q) => (
-                  <Suggestion
-                    key={q}
-                    suggestion={q}
-                    onClick={handleSuggestedQuestion}
-                    className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-300 text-xs py-2 px-3 rounded-lg transition-all duration-200"
-                  />
-                ))}
-              </Suggestions>
-            </div>
-          )}
           <div ref={messagesEndRef} />
         </ConversationContent>
         <ConversationScrollButton />
@@ -1209,6 +1352,7 @@ export function ResumeChatV2({ resumeId, className, onCitationClick, projects, b
           <form onSubmit={handleSubmit} className="relative">
             <div className="relative flex items-end">
               <textarea
+                ref={textareaRef}
                 value={input}
                 onChange={(e) => {
                   setInput(e.target.value);

@@ -29,7 +29,9 @@
 }
 
 .animate-in {
-  animation: animate-in 0.2s ease-out;
+  opacity: 0; /* Start invisible */
+  animation: animate-in 0.2s ease-out forwards;
+  animation-fill-mode: both; /* Ensures initial state is applied before animation starts */
 }
 
 .animation-delay-50 {
@@ -46,4 +48,12 @@
 
 .animation-delay-200 {
   animation-delay: 200ms;
+}
+
+.animation-delay-250 {
+  animation-delay: 250ms;
+}
+
+.animation-delay-300 {
+  animation-delay: 300ms;
 }

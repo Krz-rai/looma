@@ -130,10 +130,10 @@ export function FileSidebar({
   const sortedFiles = [...(dynamicFiles || [])].sort((a, b) => a.position - b.position);
 
   return (
-    <div className="h-full flex flex-col bg-sidebar border-r">
+    <div className="h-full flex flex-col bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b">
-        <h3 className="text-sm font-semibold">Pages</h3>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+        <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Pages</h3>
         {isEditable && (
           <Button
             onClick={() => setShowNewFileDialog(true)}
@@ -154,8 +154,8 @@ export function FileSidebar({
             className={cn(
               "group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors",
               selectedFileId === null
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent/50 text-sidebar-foreground"
+                ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100"
+                : "hover:bg-neutral-50 dark:hover:bg-neutral-900 text-neutral-700 dark:text-neutral-300"
             )}
             onClick={() => onSelectFile(null)}
           >
@@ -165,7 +165,7 @@ export function FileSidebar({
           
           {/* Separator if there are files */}
           {sortedFiles.length > 0 && (
-            <div className="my-2 border-b border-sidebar-border/50" />
+            <div className="my-2 border-b border-neutral-200/50 dark:border-neutral-800/50" />
           )}
           
           {sortedFiles.map((file) => {
@@ -177,9 +177,9 @@ export function FileSidebar({
                 key={file._id}
                 className={cn(
                   "group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors",
-                  isSelected 
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground" 
-                    : "hover:bg-sidebar-accent/50 text-sidebar-foreground"
+                  isSelected
+                    ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100"
+                    : "hover:bg-neutral-50 dark:hover:bg-neutral-900 text-neutral-700 dark:text-neutral-300"
                 )}
               >
                 {/* File button content */}
@@ -209,7 +209,7 @@ export function FileSidebar({
                         <MoreVertical className="h-3.5 w-3.5" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuContent align="end" className="w-40 bg-white dark:bg-neutral-950 border-neutral-200 dark:border-neutral-800">
                       <DropdownMenuItem
                         onClick={() => {
                           setEditingFile(file._id);
@@ -251,7 +251,7 @@ export function FileSidebar({
           })}
           
           {sortedFiles.length === 0 && (
-            <div className="text-center py-8 text-sm text-muted-foreground">
+            <div className="text-center py-8 text-sm text-neutral-500 dark:text-neutral-400">
               No additional pages
             </div>
           )}
@@ -260,7 +260,7 @@ export function FileSidebar({
 
       {/* New File Dialog */}
       <Dialog open={showNewFileDialog} onOpenChange={setShowNewFileDialog}>
-        <DialogContent>
+        <DialogContent className="bg-white dark:bg-neutral-950 border-neutral-200 dark:border-neutral-800">
           <DialogHeader>
             <DialogTitle>Create New Page</DialogTitle>
             <DialogDescription>
@@ -316,7 +316,7 @@ export function FileSidebar({
 
       {/* Edit File Dialog */}
       <Dialog open={!!editingFile} onOpenChange={() => setEditingFile(null)}>
-        <DialogContent>
+        <DialogContent className="bg-white dark:bg-neutral-950 border-neutral-200 dark:border-neutral-800">
           <DialogHeader>
             <DialogTitle>Edit Page</DialogTitle>
             <DialogDescription>

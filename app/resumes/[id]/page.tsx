@@ -348,36 +348,52 @@ export default function PublicResumePage() {
       <div className="flex-1 relative overflow-hidden pt-12">
         {/* Main Content Area with AI Chat in Center */}
         <div className="h-full flex relative overflow-hidden">
-          {/* Left Sidebar Overlay */}
-          <div 
+          {/* Left Sidebar Overlay - Always rendered for smooth animations */}
+          {/* Backdrop - darkens everything including navbar (z-30 > navbar's z-20) */}
+          <div
             className={cn(
-              "absolute left-0 top-0 h-full z-20 transition-all duration-300 ease-in-out",
-              leftSidebarOpen ? "w-80 shadow-xl" : "w-0"
+              "fixed inset-0 z-30 transition-opacity duration-300 ease-in-out",
+              leftSidebarOpen
+                ? "bg-black/25 dark:bg-black/50 opacity-100"
+                : "opacity-0 pointer-events-none"
             )}
+            onClick={() => setLeftSidebarOpen(false)}
+          />
+
+          {/* Sidebar - Always in DOM for smooth animation */}
+          <div
+            className={cn(
+              "fixed left-0 top-0 h-full z-40 w-80 transform",
+              leftSidebarOpen
+                ? "translate-x-0"
+                : "-translate-x-full"
+            )}
+            style={{
+              transition: leftSidebarOpen
+                ? 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)' // Smooth ease-out
+                : 'transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)' // Slightly faster close
+            }}
           >
-            <div className="h-full bg-background border-r border-border/40 relative">
-              {leftSidebarOpen && (
-                <>
-                  <Button
-                    onClick={() => setLeftSidebarOpen(false)}
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-2 top-2 z-10 h-8 w-8"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                  <FileSidebar
-                    resumeId={resumeId}
-                    dynamicFiles={dynamicFiles || []}
-                    selectedFileId={selectedFileId}
-                    onSelectFile={(fileId) => {
-                      setSelectedFileId(fileId);
-                      setAudioPlayRequest(undefined); // Clear audio request when manually selecting a file
-                    }}
-                    isEditable={false}
-                  />
-                </>
-              )}
+            <div className="h-full bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800 shadow-2xl">
+              <Button
+                onClick={() => setLeftSidebarOpen(false)}
+                variant="ghost"
+                size="icon"
+                className="absolute right-2 top-2 z-50 h-8 w-8 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+              <FileSidebar
+                resumeId={resumeId}
+                dynamicFiles={dynamicFiles || []}
+                selectedFileId={selectedFileId}
+                onSelectFile={(fileId) => {
+                  setSelectedFileId(fileId);
+                  setAudioPlayRequest(undefined); // Clear audio request when manually selecting a file
+                  setLeftSidebarOpen(false); // Close sidebar after selection
+                }}
+                isEditable={false}
+              />
             </div>
           </div>
 
@@ -385,7 +401,7 @@ export default function PublicResumePage() {
           {!leftSidebarOpen && (
             <button
               onClick={() => setLeftSidebarOpen(true)}
-              className="absolute left-0 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center gap-1.5 px-2 py-3 bg-background/95 backdrop-blur-sm hover:bg-muted/80 rounded-r-lg border border-l-0 border-border/50 shadow-sm transition-all group"
+              className="absolute left-0 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center gap-1.5 px-2 py-3 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-900 rounded-r-lg border border-l-0 border-neutral-200 dark:border-neutral-800 shadow-md hover:shadow-lg transition-all duration-200 group"
             >
               <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors" style={{ writingMode: 'vertical-lr' }}>Files</span>
               <SidebarOpen className="h-4 w-4 text-muted-foreground group-hover:text-foreground" />

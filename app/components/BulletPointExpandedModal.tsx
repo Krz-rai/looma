@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useCompletion } from '@ai-sdk/react';
+import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import "./BulletPointExpandedModal.css";
 import {
@@ -19,180 +18,81 @@ interface BulletPointExpandedModalProps {
     _id: Id<"bulletPoints">;
     content: string;
   };
-  projectTitle: string;
-  connectedPageId?: Id<"dynamicFiles">;
   resumeId: Id<"resumes">;
+  connectedPageId?: Id<"dynamicFiles">;
+  projectTitle?: string;
 }
 
-interface ContentBlock {
+type ContentBlock = {
   type: 'ai' | 'citation';
   content: string;
   pageTitle?: string;
-  lineNumber?: number;
-}
+};
 
-export function BulletPointExpandedModal({
+export default function BulletPointExpandedModal({
   children,
   bulletPoint,
-  projectTitle,
-  connectedPageId,
   resumeId,
+  connectedPageId,
+  projectTitle,
 }: BulletPointExpandedModalProps) {
-  const [open, setOpen] = useState(false);
   const [contentBlocks, setContentBlocks] = useState<ContentBlock[]>([]);
+  const [open, setOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const convexSiteUrl = process.env.NEXT_PUBLIC_CONVEX_URL?.replace(
-    /.cloud$/,
-    ".site"
-  );
+  // Get the convex site URL - fallback to hardcoded if env not available
+  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL || "https://quirky-walrus-359.convex.cloud";
+  const convexSiteUrl = convexUrl.replace(".cloud", ".site");
 
-  // Use useCompletion for simpler single-response generation
-  const {
-    completion,
-    complete,
-    isLoading,
-    error
-  } = useCompletion({
-    api: `${convexSiteUrl}/api/bullet-analysis`,
-    body: {
-      resumeId,
-      bulletPointId: bulletPoint._id,
-      connectedPageId,
-      projectTitle,
-    },
-    onFinish: (prompt, completionText) => {
-      console.log('✅ Completion finished:', {
-        prompt,
-        completionText,
-        length: completionText?.length
-      });
+  // Parse the response and create content blocks
+  const parseResponse = (responseText: string) => {
+    console.log('📝 Parsing response:', responseText);
+    const blocks: ContentBlock[] = [];
+    const lines = responseText.split('\n').filter(line => line.trim());
+    let currentBlock: ContentBlock | null = null;
 
-      // Parse the completion and create alternating blocks
-      const blocks: ContentBlock[] = [];
-      const lines = completionText.split('\n').filter(line => line.trim());
-      let currentBlock: ContentBlock | null = null;
-
-      lines.forEach(line => {
-        // Check if it's a citation marker - simplified format
-        if (line.includes('[CITATION]')) {
-          if (currentBlock && currentBlock.type === 'ai') {
-            blocks.push(currentBlock);
-          }
-          // Extract page title and content from citation - simplified format
-          const citationMatch = line.match(/\[CITATION\]\s*([^|]+)\s*\|\s*(.*)/);
-          if (citationMatch) {
-            currentBlock = {
-              type: 'citation',
-              content: citationMatch[2].trim(),
-              pageTitle: citationMatch[1].trim()
-            };
-            blocks.push(currentBlock);
-            currentBlock = null;
-          }
-        } else if (line.includes('[AI]')) {
-          if (currentBlock) {
-            blocks.push(currentBlock);
-          }
-          currentBlock = {
-            type: 'ai',
-            content: line.replace('[AI]', '').trim()
-          };
-        } else if (currentBlock) {
-          // Continue adding to current block
-          currentBlock.content += '\n' + line;
+    lines.forEach(line => {
+      if (line.includes('[CITATION]')) {
+        if (currentBlock && currentBlock.type === 'ai') {
+          blocks.push(currentBlock);
         }
-      });
-
-      // Add any remaining block
-      if (currentBlock) {
-        blocks.push(currentBlock);
+        const citationMatch = line.match(/\[CITATION\]\s*([^|]+)\s*\|\s*(.*)/);
+        if (citationMatch) {
+          currentBlock = {
+            type: 'citation',
+            content: citationMatch[2].trim(),
+            pageTitle: citationMatch[1].trim()
+          };
+          blocks.push(currentBlock);
+          currentBlock = null;
+        }
+      } else if (line.includes('[AI]')) {
+        if (currentBlock) {
+          blocks.push(currentBlock);
+        }
+        currentBlock = {
+          type: 'ai',
+          content: line.replace('[AI]', '').trim()
+        };
+      } else if (currentBlock) {
+        currentBlock.content += '\n' + line;
       }
-
-      // If no structured format, parse as simple bullet points
-      if (blocks.length === 0) {
-        const aiPoints = completionText.split('•').filter(p => p.trim());
-        aiPoints.forEach((point) => {
-          blocks.push({
-            type: 'ai',
-            content: '• ' + point.trim()
-          });
-        });
-      }
-
-      setContentBlocks(blocks);
-    },
-    onError: (err) => {
-      console.error("Error generating AI analysis:", err);
-      console.error("Error details:", {
-        message: err.message,
-        stack: err.stack,
-        cause: err.cause
-      });
-    },
-  });
-
-  // Log error if it exists
-  useEffect(() => {
-    if (error) {
-      console.error("useCompletion error:", error);
-    }
-  }, [error]);
-
-  // Parse completion as it streams to show partial results
-  useEffect(() => {
-    console.log('📝 Completion update:', {
-      completion,
-      isLoading,
-      length: completion?.length
     });
 
-    if (completion) {
-      // Parse completion for live updates (both during and after loading)
-      const blocks: ContentBlock[] = [];
-      const lines = completion.split('\n').filter(line => line.trim());
-      let currentBlock: ContentBlock | null = null;
-
-      lines.forEach(line => {
-        if (line.includes('[CITATION]')) {
-          if (currentBlock && currentBlock.type === 'ai') {
-            blocks.push(currentBlock);
-          }
-          const citationMatch = line.match(/\[CITATION\]\s*([^|]+)\s*\|\s*(.*)/);
-          if (citationMatch) {
-            currentBlock = {
-              type: 'citation',
-              content: citationMatch[2].trim(),
-              pageTitle: citationMatch[1].trim()
-            };
-            blocks.push(currentBlock);
-            currentBlock = null;
-          }
-        } else if (line.includes('[AI]')) {
-          if (currentBlock) {
-            blocks.push(currentBlock);
-          }
-          currentBlock = {
-            type: 'ai',
-            content: line.replace('[AI]', '').trim()
-          };
-        } else if (currentBlock) {
-          currentBlock.content += '\n' + line;
-        }
-      });
-
-      if (currentBlock) {
-        blocks.push(currentBlock);
-      }
-
-      if (blocks.length > 0) {
-        setContentBlocks(blocks);
-      }
+    if (currentBlock) {
+      blocks.push(currentBlock);
     }
-  }, [completion, isLoading]); // Re-run whenever completion changes
 
-  const generateAnalysis = () => {
+    return blocks;
+  };
+
+  // Generate analysis using direct fetch
+  const generateAnalysis = async () => {
+    const apiUrl = `${convexSiteUrl}/api/bullet-analysis`;
     console.log('🚀 Starting analysis with:', {
-      api: `${convexSiteUrl}/api/bullet-analysis`,
+      api: apiUrl,
+      convexSiteUrl,
       prompt: `Analyze: "${bulletPoint.content}"`,
       body: {
         resumeId,
@@ -203,9 +103,48 @@ export function BulletPointExpandedModal({
     });
 
     setContentBlocks([]);
-    // Simple prompt for fast response
-    const analysisPrompt = `Analyze: "${bulletPoint.content}"`;
-    complete(analysisPrompt);
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt: `Analyze: "${bulletPoint.content}"`,
+          resumeId,
+          bulletPointId: bulletPoint._id,
+          connectedPageId,
+          projectTitle,
+        }),
+      });
+
+      console.log('📡 Response status:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const text = await response.text();
+      console.log('✅ Response text:', text);
+
+      // Parse the response
+      const blocks = parseResponse(text);
+      console.log('📦 Parsed blocks:', blocks);
+
+      if (blocks.length > 0) {
+        setContentBlocks(blocks);
+      } else {
+        setError('No analysis generated');
+      }
+    } catch (err) {
+      console.error('❌ Error generating analysis:', err);
+      setError(err instanceof Error ? err.message : 'Failed to generate analysis');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Handle opening
@@ -215,8 +154,6 @@ export function BulletPointExpandedModal({
       generateAnalysis();
     }
   };
-
-  // Popover handles escape key and click outside automatically
 
   return (
     <Popover open={open} onOpenChange={handleOpen}>
@@ -259,6 +196,13 @@ export function BulletPointExpandedModal({
                 </div>
                 <p className="text-xs text-muted-foreground animate-pulse">Analyzing context...</p>
               </div>
+            ) : error ? (
+              <div className="text-center py-8">
+                <div className="inline-flex items-center justify-center h-10 w-10 rounded-full bg-destructive/10 mb-3">
+                  <span className="text-destructive">⚠️</span>
+                </div>
+                <p className="text-xs text-destructive">{error}</p>
+              </div>
             ) : contentBlocks.length > 0 ? (
               <div className="space-y-2">
                 {contentBlocks.map((block, idx) => (
@@ -266,9 +210,14 @@ export function BulletPointExpandedModal({
                     key={idx}
                     className={cn(
                       "text-xs leading-snug",
-                      "animate-in fade-in-0 slide-in-from-top-1",
-                      `animation-delay-${idx * 50}`
+                      "animate-in",
+                      `animation-delay-${Math.min(idx * 50, 300)}`
                     )}
+                    style={{
+                      opacity: 0,
+                      animation: `animate-in 0.2s ease-out forwards`,
+                      animationDelay: `${idx * 50}ms`
+                    }}
                   >
                     {block.type === 'citation' ? (
                       <div className="bg-muted/20 rounded-md px-2.5 py-1.5 border-l-2 border-primary/20 hover:bg-muted/30 transition-colors">

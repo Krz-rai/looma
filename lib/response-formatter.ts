@@ -9,9 +9,6 @@ export function formatAIResponse(
   // Convert markdown-style bullets to consistent format
   formatted = formatted.replace(/^[-*]\s+/gm, '• ');
 
-  // Fix citation formats
-  formatted = fixCitationFormats(formatted);
-
   // Remove any [web_search] or similar tool indicators
   formatted = formatted.replace(/\[web_search\]/g, '');
   formatted = formatted.replace(/\[tool_[^\]]+\]/g, '');
@@ -26,38 +23,6 @@ export function formatAIResponse(
   formatted = formatted.trim();
 
   return formatted;
-}
-
-/**
- * Fix various citation format issues
- */
-function fixCitationFormats(content: string): string {
-  let fixed = content;
-
-  // Keep the Type:"text" format as-is, the parser handles both formats
-  // Don't strip line numbers from page citations - they're important!
-
-  // Fix citations with missing brackets
-  // Only match patterns where {ID} is NOT preceded by ]
-  // This handles patterns like "(0.1% fraud rate) {BR3}" but not "[text]{P1}"
-  fixed = fixed.replace(/(?<!\])([^[\]]{0,50}?)\s*\{([A-Z]+\d+|portfolio|github[^}]*)\}/g, (match, text, id) => {
-    // Clean up the text - remove leading punctuation/whitespace
-    let cleanText = text.trim();
-    // If text starts with punctuation (except parentheses), remove it
-    cleanText = cleanText.replace(/^[,;:.]+\s*/, '');
-
-    // If text is empty or just whitespace, use a generic label
-    if (!cleanText) {
-      cleanText = 'Reference';
-    }
-
-    return `[${cleanText}]{${id}}`;
-  });
-
-  // Don't remove citations based on ID mapping - let the parser handle validation
-  // The parser will handle invalid IDs appropriately
-
-  return fixed;
 }
 
 /**
@@ -126,15 +91,12 @@ export function postProcessResponse(
   // Only do minimal processing to preserve AI's formatting
   let processed = content;
 
-  // Fix citation formats
-  processed = fixCitationFormats(processed);
-
   // Remove tool indicators
   processed = processed.replace(/\[web_search\]/g, '');
   processed = processed.replace(/\[tool_[^\]]+\]/g, '');
 
   // Clean up formatting after "AS:" or "------ AS:" markers
-  processed = processed.replace(/------\s*AS:\s*([\s\S]*)$/, (match, content) => {
+  processed = processed.replace(/------\s*AS:\s*([\s\S]*)$/, (_match, content) => {
     // Remove the AS: marker and clean up the content
     return content.trim();
   });

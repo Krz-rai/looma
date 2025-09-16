@@ -219,7 +219,7 @@ const piiRedactionMiddleware: LanguageModelV2Middleware = {
 const defaultSettings = defaultSettingsMiddleware({
   settings: {
     temperature: 0.3,
-    maxOutputTokens: 20000,
+    maxOutputTokens: 3000,  // Reduced from 20000 to prevent token overuse
   },
 });
 
@@ -407,120 +407,82 @@ http.route({
       })
     };
 
-    // GitHub context
-    const githubContext = resume.github ? `
-GitHub: ${resume.github}` : '';
+    // Remove large resume context from system prompt - now fetched via tools
 
-    // Format available pages
-    const availablePagesContext = publicPages.length > 0 ? `
-
-AVAILABLE PAGES:
-${publicPages.map((page: any, index: number) => {
-  const simpleId = idMap.forward[page._id];
-  return `${index + 1}. "${page.title}" (ID: ${simpleId})`;
-}).join('\n')}
-` : '';
-
-    // Format resume context with citations
-    const resumeContext = `
-Resume Owner: ${resume.name || resumeData.title}
-${resume.role ? `Role: ${resume.role}` : ''}
-Resume Title: ${resumeData.title}
-${resumeData.description ? `Description: ${resumeData.description}` : ''}
-${resume.portfolio ? `
-PORTFOLIO: ${resume.portfolio} → USE scrape_portfolio TOOL
-` : ''}
-${githubContext}
-${availablePagesContext}
-Projects:
-${resumeData.projects.map((project, pIndex) => {
-  let projectText = `
-  ${pIndex + 1}. ${project.title} (ID: ${project.simpleId})
-  ${project.description ? `   Description: ${project.description}` : ''}`;
-
-  if (project.connectedPageInfo) {
-    projectText += `
-  📄 Connected Page: "${project.connectedPageInfo.title}" (ID: ${project.connectedPageInfo.simpleId})`;
-  }
-
-  projectText += `
-
-  Bullet Points:
-  ${project.bulletPoints.map((bp: any) => `
-    • ${bp.content} (ID: ${bp.simpleId})
-    ${bp.branches.length > 0 ? `
-      Branches:
-      ${bp.branches.map((branch: any) => `
-        - ${branch.content} (ID: ${branch.simpleId})`).join('\n')}` : ''}`).join('\n')}`;
-
-  return projectText;
-}).join('\n')}`;
-
-    // Build conversation history
-    const conversationContext = messages.slice(-5).map((msg: any) => {
+    // Build conversation history - REDUCED to last 3 messages only
+    const conversationContext = messages.slice(-3).map((msg: any) => {
       const content = typeof msg.content === 'string' ? msg.content :
                       Array.isArray(msg.content) ? msg.content.map((c: any) => c.text || '').join('') : '';
-      return `${msg.role.toUpperCase()}: ${content}`;
-    }).join('\n\n');
+      // Truncate long messages to save tokens
+      const truncated = content.length > 200 ? content.substring(0, 200) + '...' : content;
+      return `${msg.role}: ${truncated}`;
+    }).join('\n');
 
-    // System prompt using XML-based instructions from instructions.xml
-    const systemPrompt = `You are Aurea, an AI assistant specialized in discussing candidate information from resumes, projects, and portfolios.
+    // OPTIMIZED system prompt - structured for AI clarity
+    const systemPrompt = `You are Aurea, an AI assistant analyzing candidate ${resume.name || resumeData.title}.
 
-    ## Core Directive
-    Always use search_content tool BEFORE responding. ALWAYS search ALL available data sources BEFORE responding. Never answer from assumptions - use tools to verify everything.
-    
-    ## Scope
-    - Discuss ONLY information related to the candidate's resume, projects, portfolio, and professional background
-    - EXCEPTION: Provide immediate help for emergencies (medical, safety-critical)
-    - For off-topic non-emergency requests: "I can only discuss information related to this resume and candidate."
-    
-    ## Data Sources
-    Resume Context: ${resumeContext}
-    ${conversationContext ? `Recent Conversation: ${conversationContext}` : ''}
-    
-    ## Tool Usage Protocol
-    For EVERY query, execute in this order:
-    1. search_content - Use multiple relevant search terms
-    2. search_page_content - Fetch ALL related pages immediately
-    3. scrape_portfolio - If portfolio mentioned or exists
-    4. web_search - ONLY if user explicitly requests external comparison
-    
-    Search Strategy:
-    - Cast wide net with multiple search variations (e.g., "ML" → also search "machine learning", "model", "AI")
-    - Better to over-search than miss information
-    - ALWAYS generate text response after tool usage, even if no results found
-    
-    ## Response Format
-    - Bulleted list format
-    - Each bullet: ONE concrete fact + ONE citation
-    - Provide comprehensive answers with context, not rushed 1-2 bullets
-    - Include specifics: numbers, metrics, team sizes, impact
-    - Add professional insights and genuine reactions (e.g., "Impressive for a 3-person team")
-    
-    ## Citations (exactly ONE per bullet, placed at end)
-    Use EXACT formats below - do not mix or modify:
-    - Projects: [Project:"title"]{P#}
-    - Resume bullets: [Bullet:"brief text"]{B#}
-    - Page content: [PageTitle L#]{PG#}
-    - Echo points: [Echo P#]{PG#}
-    - Portfolio: [Portfolio:"context"]{portfolio}
-    - Web sources: [Web: domain]{web}
-    
-    ## Critical Rules
-    1. NEVER respond without searching first
-    2. ALWAYS fetch connected pages proactively
-    3. Generate ONE consolidated response per query
-    4. MANDATORY: Always provide text response after tool calls
-    5. Never invent facts - say "I couldn't find that information" if absent
-    6. No meta-commentary about tool usage
-    7. Wait for all tools to complete before responding
-    
-    ## Response Style
-    - Natural, confident, concise
-    - Include professional assessments
-    - No disclaimers or tool narration
-    - Demonstrate deep understanding of technical context`;
-    const lastMessages = messages.slice(-10);
+    DATA_SOURCES:
+    - Projects: ${resumeData.projects.length} total (fetch via fetch_resume_data)
+    - Portfolio: ${resume.portfolio ? 'Available at ' + resume.portfolio : 'None'}
+    - Documentation: ${publicPages.length} pages available
+
+    TOOL_SELECTION_MATRIX:
+    IF query_contains("projects" OR "experience") → USE fetch_resume_data
+    IF query_contains("specific_detail") → USE search_content
+    IF query_contains("portfolio") → USE scrape_portfolio
+    ELSE → USE fetch_resume_data as default
+
+    RESPONSE_REQUIREMENTS:
+    1. FORMAT all responses using comprehensive Markdown syntax:
+       - Headers: # H1, ## H2, ### H3 for structure
+       - **Bold** for emphasis, *italic* for subtle emphasis
+       - Lists: - or * for bullets, 1. 2. 3. for numbered
+       - \`inline code\` for technical terms
+       - \`\`\`language
+         code blocks
+         \`\`\` for multi-line code
+       - > Blockquotes for quotes or important notes
+       - [Links](url) for external references
+       - Tables: | Header | Header |\\n|--------|--------|\\n| Cell | Cell |
+       - --- for horizontal rules
+       - Task lists: - [ ] unchecked, - [x] checked
+       - Math: $inline$ and $$block$$ using LaTeX
+       - Use proper paragraph breaks (double newline)
+       - Structure with clear sections when appropriate
+    2. CITATION PLACEMENT - CRITICAL:
+       - Put citations IMMEDIATELY after the fact they support, on the SAME LINE
+       - NEVER put citations on a separate line
+       - NEVER put citations as a separate bullet point
+    3. Use EXACT citation formats (no modifications):
+       - Projects: [Project:"title"]{P#}
+       - Resume bullets: [Bullet:"brief text"]{B#}
+       - Page content: [ActualPageTitle L#]{PG#} - REPLACE ActualPageTitle with the real page title!
+       - Echo points: [Echo P#]{PG#}
+       - Portfolio: [Portfolio:"context"]{portfolio}
+       - Web sources: [Web: domain]{web}
+    4. CORRECT Format Example:
+       Here are ABU SAID's projects:
+
+       **Real-Time Fraud Detection System**
+       - Developed ML pipeline processing 1M+ daily transactions [Project:"Real-Time Fraud Detection System"]{P1}
+       - Achieved 99.2% precision and 94% recall [Bullet:"99.2% precision"]{B3}
+
+       **Distributed E-Commerce Platform**
+       - Built scalable platform handling 100K+ daily users [Project:"Distributed E-Commerce Platform"]{P2}
+
+    5. WRONG Format (NEVER DO THIS):
+       **Real-Time Fraud Detection System**
+       - Developed ML pipeline
+       - Processes 1M+ transactions
+       - [Project:"Real-Time Fraud Detection System"]{P1} ← Citation alone - WRONG!
+
+       - **Details**: [Project:"title"]{P1} ← Citation after label - WRONG!
+    6. NEVER write "PageTitle" - always use the actual page title
+    7. ALWAYS include specific metrics when available
+
+    CONTEXT:
+    ${conversationContext || 'No previous conversation'}`;
+    const lastMessages = messages.slice(-5);  // Reduced from 10 to save tokens
 
     // Use OpenAI GPT-4o for high-quality responses
     const openai = createOpenAI({
@@ -767,6 +729,41 @@ ${resumeData.projects.map((project, pIndex) => {
         },
       });
 
+      // Add tool to fetch resume data on demand instead of embedding it all in context
+      tools.fetch_resume_data = tool({
+        description: "Get resume projects and structure. USE THIS FIRST for project questions.",
+        inputSchema: z.object({
+          dataType: z.enum(["overview", "projects", "full"]).optional().default("projects"),
+        }),
+        execute: async ({ dataType = "full" }) => {
+          console.log(`📄 [TOOL] Fetching resume data: ${dataType}`);
+
+          if (dataType === "overview") {
+            return {
+              title: resumeData.title,
+              description: resumeData.description,
+              projectCount: resumeData.projects.length,
+              projectTitles: resumeData.projects.map((p: any) => `${p.title} (${p.simpleId})`),
+            };
+          }
+
+          if (dataType === "projects") {
+            return {
+              projects: resumeData.projects.map((p: any) => ({
+                title: p.title,
+                simpleId: p.simpleId,
+                description: p.description,
+                bulletCount: p.bulletPoints.length,
+                connectedPage: p.connectedPageInfo?.title,
+              }))
+            };
+          }
+
+          // Full data
+          return resumeData;
+        },
+      });
+
       console.log(`📋 Total tools available: ${Object.keys(tools).length} - ${Object.keys(tools).join(', ')}`);
     }
 
@@ -780,10 +777,10 @@ ${resumeData.projects.map((project, pIndex) => {
       model,
       system: systemPrompt,
       messages: convertToModelMessages(lastMessages),
-      // Only require tools if they exist, otherwise let model choose
+      // Use auto instead of required to reduce unnecessary tool calls
       toolChoice: 'auto',
       temperature: 0.3,
-      stopWhen: stepCountIs(20),
+      stopWhen: stepCountIs(5),  // Reduced from 20 to prevent excessive tool calls
       // Pass the tools object (may be empty)
       tools: Object.keys(tools).length > 0 ? tools : undefined,
       // Add smooth streaming for better UX
@@ -853,13 +850,14 @@ http.route({
   path: "/api/bullet-analysis",
   method: "POST",
   handler: httpAction(async (ctx, req) => {
+
     // Handle both useChat (messages) and useCompletion (prompt) formats
     const body = await req.json();
 
     // Log the request body to debug
     console.log('🔍 Bullet analysis request body:', JSON.stringify(body, null, 2));
 
-    const { prompt, messages, resumeId, bulletPointId, connectedPageId } = body as {
+    const { prompt, resumeId, bulletPointId, connectedPageId } = body as {
       prompt?: string; // From useCompletion
       messages?: UIMessage[]; // From useChat (backwards compatibility)
       resumeId: Id<"resumes">;
@@ -931,96 +929,90 @@ http.route({
       }
     }
 
-    // Simplified prompt for faster inference
-    const systemPrompt = `Analyze this bullet point to extract the key metric and technical achievement.
+    // Define the schema for bullet analysis
+    const bulletAnalysisSchema = z.object({
+      opinion1: z.string().describe("Core achievement or technical insight (max 15 words)"),
+      citation1: z.string().describe("Brief quote or reference from the source that supports opinion1"),
+      opinion2: z.string().describe("Key metric, impact, or result (max 15 words)"),
+      citation2: z.string().describe("Brief quote or reference from the source that supports opinion2"),
+    });
+
+    // Simplified prompt for structured output
+    const systemPrompt = `Analyze this bullet point to extract key insights and supporting citations.
 
 Bullet: "${bulletPoint.content}"
 
 ${pageContent ? `Source content:
-${pageContent.split('\n').slice(0, 15).join('\n')}` : ''}
+${pageContent.split('\n').slice(0, 20).join('\n')}` : ''}
 
-Output exactly 4 concise blocks:
+Instructions:
+- Extract two key insights from the bullet point
+- Provide supporting citations from the source content
+- Be extremely concise and specific
+- Focus on technical achievements and measurable impacts`;
 
-[AI] Core achievement (max 10 words)
-[CITATION] ${pageTitle || 'Doc'} | [brief quote]
-[AI] Key metric/impact (max 10 words)
-[CITATION] ${pageTitle || 'Doc'} | [brief quote]
-
-Be extremely concise. No full sentences needed.`;
-    // Use Cerebras GPT-OSS-120B for faster inference
-    const { createCerebras } = await import('@ai-sdk/cerebras');
-    const cerebras = createCerebras({
-      apiKey: process.env.CEREBRAS_API_KEY!,
+    // Use OpenAI GPT-4o for structured output support
+    const openai = createOpenAI({
+      apiKey: process.env.OPENAI_API_KEY!,
     });
-    const model = createWrappedCerebrasModel(cerebras, 'gpt-oss-120b');
-    console.log('⚡ Using wrapped Cerebras GPT-OSS-120B for fast bullet analysis');
-
-    // Handle both formats
-    let messagesToUse;
-    if (prompt) {
-      // useCompletion format - create a single user message
-      const userMessage: UIMessage = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        parts: [{
-          type: 'text',
-          text: prompt
-        }]
-      };
-      messagesToUse = convertToModelMessages([userMessage]);
-    } else if (messages && messages.length > 0) {
-      // useChat format - use existing messages
-      messagesToUse = convertToModelMessages(messages.slice(-10));
-    } else {
-      throw new Error("No prompt or messages provided");
-    }
+    const model = createWrappedOpenAIModel(openai, 'gpt-4o');
+    console.log('⚡ Using wrapped OpenAI GPT-4o for bullet analysis with structured output');
 
     try {
-      const result = streamText({
-        model,
-        system: systemPrompt,
-        messages: messagesToUse,
-        temperature: 0.5,
-        maxOutputTokens: 5000,  // Concise for bullet analysis
-        stopWhen: stepCountIs(10),
-        // Add smooth streaming for better UX
-        experimental_transform: smoothStream({
-          delayInMs: 10,  // Slightly faster for snappy feel
-          chunking: 'word'
-        }),
-        onError(error) {
-          console.error("Bullet analysis error:", error);
-        },
-        onFinish({ usage }) {
-          if (usage) {
-            console.log('📈 Bullet analysis token usage:', usage);
-          }
-        },
+      // Use generateObject for structured output
+      const { generateObject } = await import("ai");
+
+      // Define the schema for bullet analysis
+      const bulletAnalysisSchema = z.object({
+        opinion1: z.string().describe("Core achievement or technical insight (max 15 words)"),
+        citation1: z.string().describe("Brief quote or reference from the source that supports opinion1"),
+        opinion2: z.string().describe("Key metric, impact, or result (max 15 words)"),
+        citation2: z.string().describe("Brief quote or reference from the source that supports opinion2"),
       });
 
-      // Return appropriate response format
-      if (prompt) {
-        // For useCompletion - return UIMessage stream (data protocol)
-        // This works because useCompletion can parse the data stream protocol
-        return result.toUIMessageStreamResponse({
-          headers: new Headers({
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-          }),
-        });
-      } else {
-        // For useChat - return UIMessage stream
-        return result.toUIMessageStreamResponse({
-          headers: new Headers({
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-          }),
-        });
-      }
+      // Structured prompt for better results
+      const systemPrompt = `Analyze this bullet point to extract key insights and supporting citations.
+
+Bullet: "${bulletPoint.content}"
+
+${pageContent ? `Source content:
+${pageContent.split('\n').slice(0, 20).join('\n')}` : ''}
+
+Instructions:
+- Extract two key insights from the bullet point
+- Provide supporting citations from the source content
+- Be extremely concise and specific
+- Focus on technical achievements and measurable impacts`;
+
+      const result = await generateObject({
+        model,
+        schema: bulletAnalysisSchema,
+        system: systemPrompt,
+        prompt: prompt || "Analyze the bullet point",
+        temperature: 0.5,
+        maxOutputTokens: 500,
+      });
+
+      // Format the response
+      const formattedResponse = `[AI] ${result.object.opinion1}
+[CITATION] ${pageTitle || 'Doc'} | ${result.object.citation1}
+[AI] ${result.object.opinion2}
+[CITATION] ${pageTitle || 'Doc'} | ${result.object.citation2}`;
+
+      console.log('✅ Generated structured bullet analysis:', result.object);
+      console.log('📄 Formatted response:', formattedResponse);
+
+      // Simply return the formatted text - useCompletion will handle it
+      return new Response(formattedResponse, {
+        headers: new Headers({
+          "Content-Type": "text/plain; charset=utf-8",
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        }),
+      });
     } catch (error) {
-      console.error('❌ Cerebras API error, returning graceful fallback:', error);
+      console.error('❌ OpenAI API error, returning graceful fallback:', error);
       // Return a simple fallback response when API fails
       const fallbackResponse = `[AI] Analysis temporarily unavailable
 [CITATION] ${pageTitle || 'Doc'} | Please try again
@@ -1046,7 +1038,7 @@ http.route({
   handler: httpAction(async (ctx, req) => {
     const { messages, resumeId }: { messages: UIMessage[]; resumeId?: Id<"resumes"> } = await req.json();
 
-    const lastMessages = messages.slice(-10);
+    const lastMessages = messages.slice(-5);  // Reduced from 10 to save tokens
 
     // Use Cerebras GPT-OSS-120B for all chat endpoints
     const { createCerebras } = await import('@ai-sdk/cerebras');
@@ -1256,10 +1248,11 @@ http.route({
   path: "/api/echo-analysis",
   method: "POST",
   handler: httpAction(async (ctx, req) => {
+
     const body = await req.json();
     console.log('🎵 Echo analysis request:', JSON.stringify(body, null, 2));
 
-    const { prompt, messages, transcriptionId, summaryPoint, segmentReferences } = body as {
+    const { prompt, transcriptionId, summaryPoint, segmentReferences, resumeId } = body as {
       prompt?: string; // From useCompletion
       messages?: UIMessage[]; // From useChat (backwards compatibility)
       transcriptionId: Id<"audioTranscriptions">;
@@ -1270,6 +1263,7 @@ http.route({
         end: number;
         originalText: string;
       }>;
+      resumeId?: Id<"resumes">; // Optional resume context
     };
 
     if (!transcriptionId) {
@@ -1298,134 +1292,111 @@ http.route({
     }
 
     try {
-      // Use Cerebras GPT-OSS-120B for fast echo analysis (same as bullet analysis)
-      const { createCerebras } = await import('@ai-sdk/cerebras');
-      const cerebras = createCerebras({
-        apiKey: process.env.CEREBRAS_API_KEY!,
+      // Use generateObject for structured output
+      const { generateObject } = await import("ai");
+
+      // Use OpenAI GPT-4o
+      const openai = createOpenAI({
+        apiKey: process.env.OPENAI_API_KEY!,
       });
-      const model = createWrappedCerebrasModel(cerebras, 'gpt-oss-120b');
-      console.log('⚡ Using wrapped Cerebras GPT-OSS-120B for fast echo analysis');
+      const model = createWrappedOpenAIModel(openai, 'gpt-4o');
+      console.log('⚡ Using wrapped OpenAI GPT-4o for echo analysis with structured output');
+
+      // Define the schema for echo analysis - supports up to 3 insights
+      const echoAnalysisSchema = z.object({
+        opinion1: z.string().describe("Core insight or contextual analysis (max 15 words)"),
+        citation1: z.string().describe("Brief quote or timestamp reference that supports opinion1"),
+        opinion2: z.string().describe("Key connection or deeper meaning (max 15 words)"),
+        citation2: z.string().describe("Brief quote or timestamp reference that supports opinion2"),
+        opinion3: z.string().optional().describe("Additional insight or future implication (max 15 words) - optional"),
+        citation3: z.string().optional().describe("Brief quote or timestamp reference that supports opinion3 - optional"),
+      });
+
+      // Format timestamps properly
+      const formatTimestamp = (ref: any) => {
+        if (!ref) return "0:00";
+        return `${Math.floor(ref.start / 60)}:${String(Math.floor(ref.start % 60)).padStart(2, '0')}`;
+      };
 
       // Create context from segment references
       const sourceContext = segmentReferences.map((ref, index) =>
-        `Source ${index + 1} [${Math.floor(ref.start / 60)}:${String(Math.floor(ref.start % 60)).padStart(2, '0')}]: "${ref.originalText}"`
+        `Source ${index + 1} [${formatTimestamp(ref)}]: "${ref.originalText}"`
       ).join('\n');
 
-      // Generate AI analysis with alternating context and sources
-      const systemPrompt = `You are analyzing an echo point and its source segments.
+      // Get resume context if available
+      let resumeContext = "";
+      if (resumeId) {
+        const resume = await ctx.runQuery(api.resumes.get, { id: resumeId });
+        if (resume) {
+          resumeContext = `\nCandidate Context: ${resume.name || resume.title}
+Focus: ${resume.description || 'Technology professional'}`;
+        }
+      }
+
+      // Structured prompt
+      const systemPrompt = `Analyze this echo point to extract key insights and connections.
 
 Echo Point: "${summaryPoint}"
 
 Source Segments:
 ${sourceContext}
+${resumeContext}
 
-Full Transcription Context (for understanding only):
-${transcription.transcription.substring(0, 2000)}...
+Instructions:
+- Extract 2-3 key insights from the echo point
+- Provide a third insight if the content is particularly rich or meaningful
+- Connect insights to professional growth or technical expertise
+- Be extremely concise and specific (max 15 words per insight)
+- Focus on career relevance and skill demonstrations
+- The third insight (opinion3/citation3) is optional - only use if valuable`;
 
-Create an analysis with alternating AI context and source citations. Format your response EXACTLY as:
+      const result = await generateObject({
+        model,
+        schema: echoAnalysisSchema,
+        system: systemPrompt,
+        prompt: prompt || "Analyze the echo point",
+        temperature: 0.4,
+        maxOutputTokens: 500,
+      });
 
-[AI] Provide contextual analysis about what this summary point means
-[SOURCE] ${Math.floor(segmentReferences[0]?.start / 60 || 0)}:${String(Math.floor(segmentReferences[0]?.start % 60 || 0)).padStart(2, '0')} | ${segmentReferences[0]?.originalText || ''}
-[AI] Add deeper insight or connection to broader themes
-${segmentReferences[1] ? `[SOURCE] ${Math.floor(segmentReferences[1].start / 60)}:${String(Math.floor(segmentReferences[1].start % 60)).padStart(2, '0')} | ${segmentReferences[1].originalText}` : ''}
-[AI] Conclude with the significance or implications
+      // Format the response using CITATION format - including optional third insight
+      let formattedResponse = `[AI] ${result.object.opinion1}
+[CITATION] ${formatTimestamp(segmentReferences[0])} | ${segmentReferences[0]?.originalText || result.object.citation1}
+[AI] ${result.object.opinion2}
+[CITATION] ${formatTimestamp(segmentReferences[1] || segmentReferences[0])} | ${segmentReferences[1]?.originalText || result.object.citation2}`;
 
-Rules:
-- ALWAYS use "He" or "She" based on the speaker's voice/context (NEVER use "The speaker")
-- Start each AI insight with [AI]
-- Start each source with [SOURCE] timestamp | text
-- Keep AI insights concise and meaningful
-- Always alternate between AI and SOURCE
-- Use the exact source text provided
-- Maintain consistent pronoun usage throughout (He/She based on context)`;
-
-      // Handle both formats (same as bullet analysis)
-      let messagesToUse;
-      if (prompt) {
-        // useCompletion format - create a single user message
-        const userMessage: UIMessage = {
-          id: crypto.randomUUID(),
-          role: 'user',
-          parts: [{
-            type: 'text',
-            text: prompt
-          }]
-        };
-        messagesToUse = convertToModelMessages([userMessage]);
-      } else if (messages && messages.length > 0) {
-        // useChat format - use existing messages
-        messagesToUse = convertToModelMessages(messages.slice(-10));
-      } else {
-        throw new Error("No prompt or messages provided");
+      // Add third insight if available
+      if (result.object.opinion3 && result.object.citation3) {
+        formattedResponse += `
+[AI] ${result.object.opinion3}
+[CITATION] ${formatTimestamp(segmentReferences[2] || segmentReferences[1] || segmentReferences[0])} | ${segmentReferences[2]?.originalText || result.object.citation3}`;
       }
 
-      // Stream text with exact same setup as bullet analysis
-      try {
-        const result = streamText({
-          model,
-          system: systemPrompt,
-          messages: messagesToUse,
-          temperature: 0.4,
-          maxOutputTokens: 5000,
-          stopWhen: stepCountIs(10),
-          // Add smooth streaming for better UX
-          experimental_transform: smoothStream({
-            delayInMs: 10,  // Fast streaming for quick analysis
-            chunking: 'word'
-          }),
-          onError(error) {
-            console.error("Audio analysis error:", error);
-          },
-          onFinish({ usage }) {
-            if (usage) {
-              console.log('📈 Audio analysis token usage:', usage);
-            }
-          },
-        });
+      console.log('✅ Generated structured echo analysis:', result.object);
+      console.log('📄 Formatted response:', formattedResponse);
 
-        // Return appropriate response format (same as bullet analysis)
-        if (prompt) {
-          // For useCompletion - return UIMessage stream (data protocol)
-          return result.toUIMessageStreamResponse({
-            headers: new Headers({
-              "Access-Control-Allow-Origin": "*",
-              "Access-Control-Allow-Methods": "POST, OPTIONS",
-              "Access-Control-Allow-Headers": "Content-Type",
-            }),
-          });
-        } else {
-          // For useChat - return UIMessage stream
-          return result.toUIMessageStreamResponse({
-            headers: new Headers({
-              "Access-Control-Allow-Origin": "*",
-              "Access-Control-Allow-Methods": "POST, OPTIONS",
-              "Access-Control-Allow-Headers": "Content-Type",
-            }),
-          });
-        }
-      } catch (streamError) {
-        console.error('❌ Cerebras API error in audio analysis, returning fallback:', streamError);
-        // Return a simple fallback with the sources
-        const fallbackText = segmentReferences.map((ref) =>
-          `[SOURCE] ${Math.floor(ref.start / 60)}:${String(Math.floor(ref.start % 60)).padStart(2, '0')} | ${ref.originalText}`
-        ).join('\n');
-
-        return new Response(fallbackText, {
-          headers: new Headers({
-            "Content-Type": "text/plain",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-          }),
-        });
-      }
-    } catch (error) {
-      console.error('❌ Audio analysis error:', error);
-      return new Response(JSON.stringify({ error: "Analysis generation failed" }), {
-        status: 500,
+      // Simply return the formatted text - useCompletion will handle it
+      return new Response(formattedResponse, {
         headers: new Headers({
-          "Content-Type": "application/json",
+          "Content-Type": "text/plain; charset=utf-8",
           "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        }),
+      });
+    } catch (error) {
+      console.error('❌ OpenAI API error in echo analysis:', error);
+      // Return a simple fallback with the sources
+      const fallbackText = segmentReferences.map((ref) =>
+        `[SOURCE] ${Math.floor(ref.start / 60)}:${String(Math.floor(ref.start % 60)).padStart(2, '0')} | ${ref.originalText}`
+      ).join('\n');
+
+      return new Response(fallbackText, {
+        headers: new Headers({
+          "Content-Type": "text/plain",
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
         }),
       });
     }
