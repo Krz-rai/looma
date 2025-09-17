@@ -20,16 +20,19 @@ import type * as bulletPoints from "../bulletPoints.js";
 import type * as contentSearch from "../contentSearch.js";
 import type * as dynamicFileContent from "../dynamicFileContent.js";
 import type * as dynamicFiles from "../dynamicFiles.js";
+import type * as embedActions from "../embedActions.js";
 import type * as fileTemplates from "../fileTemplates.js";
 import type * as fileUploads from "../fileUploads.js";
 import type * as firecrawl from "../firecrawl.js";
 import type * as github from "../github.js";
 import type * as githubSearch from "../githubSearch.js";
 import type * as http from "../http.js";
+import type * as migrationQueries from "../migrationQueries.js";
 import type * as migrations from "../migrations.js";
 import type * as projects from "../projects.js";
 import type * as resumes from "../resumes.js";
 import type * as seed from "../seed.js";
+import type * as semanticSearch from "../semanticSearch.js";
 import type * as webSearch from "../webSearch.js";
 
 /**
@@ -48,16 +51,19 @@ declare const fullApi: ApiFromModules<{
   contentSearch: typeof contentSearch;
   dynamicFileContent: typeof dynamicFileContent;
   dynamicFiles: typeof dynamicFiles;
+  embedActions: typeof embedActions;
   fileTemplates: typeof fileTemplates;
   fileUploads: typeof fileUploads;
   firecrawl: typeof firecrawl;
   github: typeof github;
   githubSearch: typeof githubSearch;
   http: typeof http;
+  migrationQueries: typeof migrationQueries;
   migrations: typeof migrations;
   projects: typeof projects;
   resumes: typeof resumes;
   seed: typeof seed;
+  semanticSearch: typeof semanticSearch;
   webSearch: typeof webSearch;
 }>;
 export declare const api: FilterApi<

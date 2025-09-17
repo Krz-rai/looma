@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { BulletPointEditor } from "./BulletPointEditor";
@@ -112,7 +112,7 @@ export function ProjectEditor({
   
   const updateProject = useMutation(api.projects.update);
   const deleteProject = useMutation(api.projects.remove);
-  const createBulletPoint = useMutation(api.bulletPoints.create);
+  const createBulletWithEmbeddings = useAction((api as any).embedActions.createBulletWithEmbeddings);
   const reorderBulletPoint = useMutation(api.bulletPoints.reorder);
   
   const bulletPoints = useQuery(api.bulletPoints.list, { 
@@ -152,7 +152,7 @@ export function ProjectEditor({
 
   const handleAddBulletPoint = async () => {
     if (newBulletContent.trim()) {
-      await createBulletPoint({
+      await createBulletWithEmbeddings({
         projectId: project._id,
         content: newBulletContent,
       });

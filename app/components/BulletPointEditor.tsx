@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -37,7 +37,7 @@ export function BulletPointEditor({
   
   const updateBulletPoint = useMutation(api.bulletPoints.update);
   const deleteBulletPoint = useMutation(api.bulletPoints.remove);
-  const createBranch = useMutation(api.branches.create);
+  const createBranchWithEmbeddings = useAction((api as any).embedActions.createBranchWithEmbeddings);
   const updateBranch = useMutation(api.branches.update);
   const deleteBranch = useMutation(api.branches.remove);
   
@@ -63,7 +63,7 @@ export function BulletPointEditor({
 
   const handleAddBranch = async () => {
     if (newBranchContent.trim()) {
-      await createBranch({
+      await createBranchWithEmbeddings({
         bulletPointId: bulletPoint._id,
         content: newBranchContent,
         type: "text",

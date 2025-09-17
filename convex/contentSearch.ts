@@ -31,6 +31,7 @@ export const searchContent = query({
     searchQuery: v.string(),
     includePages: v.boolean(),
     includeAudio: v.boolean(), // Actually searching echoes
+    includeResume: v.optional(v.boolean()), // Search bullets, projects, branches
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -158,6 +159,73 @@ export const searchContent = query({
           } else {
             // Even if no summary, we still need to track that this transcription exists
             // (though we won't search in it since there's no summary)
+          }
+        }
+      }
+    }
+
+    // Search resume content (bullets, projects, branches) if requested
+    if (args.includeResume) {
+      console.log(`📄 Searching resume content (bullets, projects, branches)`);
+      
+      // Search projects
+      const projects = await ctx.db
+        .query("projects")
+        .withIndex("by_resume", q => q.eq("resumeId", args.resumeId))
+        .collect();
+
+      for (const project of projects) {
+        // Search project title and description
+        const projectText = `${project.title} ${project.description || ''}`.toLowerCase();
+        if (projectText.includes(searchLower)) {
+          results.push({
+            type: 'project',
+            projectId: project._id,
+            projectTitle: project.title,
+            matchedText: project.title,
+            context: project.description || '',
+            position: project.position,
+          });
+        }
+
+        // Search bullets for this project
+        const bullets = await ctx.db
+          .query("bulletPoints")
+          .withIndex("by_project", q => q.eq("projectId", project._id))
+          .collect();
+
+        for (const bullet of bullets) {
+          if (bullet.content.toLowerCase().includes(searchLower)) {
+            results.push({
+              type: 'bullet',
+              bulletId: bullet._id,
+              projectId: project._id,
+              projectTitle: project.title,
+              matchedText: bullet.content,
+              context: `Bullet point from ${project.title}`,
+              position: bullet.position,
+            });
+
+            // Search branches for this bullet
+            const branches = await ctx.db
+              .query("branches")
+              .withIndex("by_bullet_point", q => q.eq("bulletPointId", bullet._id))
+              .collect();
+
+            for (const branch of branches) {
+              if (branch.content.toLowerCase().includes(searchLower)) {
+                results.push({
+                  type: 'branch',
+                  branchId: branch._id,
+                  bulletId: bullet._id,
+                  projectId: project._id,
+                  projectTitle: project.title,
+                  matchedText: branch.content,
+                  context: `Branch from bullet: ${bullet.content.substring(0, 50)}...`,
+                  position: branch.position,
+                });
+              }
+            }
           }
         }
       }

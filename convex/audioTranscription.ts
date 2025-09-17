@@ -1,6 +1,6 @@
 import { v } from "convex/values";
-import { mutation, query, action } from "./_generated/server";
-import { api } from "./_generated/api";
+import { mutation, query, action, internalMutation, internalQuery } from "./_generated/server";
+import { api, internal } from "./_generated/api";
 import { experimental_transcribe as transcribe } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 
@@ -117,7 +117,7 @@ export const transcribeAudio = action({
       // Auto-generate summary after successful transcription
       try {
         console.log("Auto-generating summary for transcription:", args.transcriptionId);
-        await ctx.runAction(api.audioTranscription.generateTranscriptionSummary, {
+        await ctx.runAction((api as any).embedActions.generateAudioSummaryWithEmbeddings, {
           transcriptionId: args.transcriptionId,
         });
         console.log("Summary auto-generated successfully");
@@ -518,5 +518,110 @@ export const deleteTranscription = mutation({
 
     // Delete transcription record
     await ctx.db.delete(args.id);
+  },
+});
+
+export const getTranscriptionAndResume = internalQuery({
+  args: {
+    transcriptionId: v.id("audioTranscriptions"),
+  },
+  returns: v.object({
+    transcriptionId: v.id("audioTranscriptions"),
+    dynamicFileId: v.id("dynamicFiles"),
+    resumeId: v.id("resumes"),
+    resumeUserId: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const transcription = await ctx.db.get(args.transcriptionId);
+    if (!transcription) {
+      throw new Error("Transcription not found");
+    }
+    const file = await ctx.db.get(transcription.dynamicFileId);
+    if (!file) {
+      throw new Error("File not found");
+    }
+    const resume = await ctx.db.get(file.resumeId);
+    if (!resume) {
+      throw new Error("Resume not found");
+    }
+    return {
+      transcriptionId: transcription._id,
+      dynamicFileId: transcription.dynamicFileId,
+      resumeId: file.resumeId,
+      resumeUserId: resume.userId,
+    };
+  },
+});
+
+export const saveAudioSummaryEmbeddings = internalMutation({
+  args: {
+    transcriptionId: v.id("audioTranscriptions"),
+    embeddings: v.array(v.object({
+      content: v.string(),
+      chunkIndex: v.number(),
+      hash: v.string(),
+      model: v.string(),
+      dim: v.number(),
+      embedding: v.array(v.float64()),
+    })),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const transcription = await ctx.db.get(args.transcriptionId);
+    if (!transcription) {
+      throw new Error("Transcription not found");
+    }
+    
+    const file = await ctx.db.get(transcription.dynamicFileId);
+    if (!file) {
+      throw new Error("File not found");
+    }
+
+    const now = Date.now();
+
+    // Clear existing embeddings for this audio summary
+    const existingChunks = await ctx.db
+      .query("knowledgeChunks")
+      .withIndex("by_source", (q) => q.eq("sourceType", "audio_summary").eq("sourceId", args.transcriptionId as unknown as string))
+      .collect();
+
+    for (const chunk of existingChunks) {
+      // Delete associated vectors
+      const vectors = await ctx.db
+        .query("vectors")
+        .withIndex("by_chunk", (q) => q.eq("chunkId", chunk._id))
+        .collect();
+      for (const vector of vectors) {
+        await ctx.db.delete(vector._id);
+      }
+      // Delete chunk
+      await ctx.db.delete(chunk._id);
+    }
+
+    // Persist new embeddings into unified knowledge base
+    for (const e of args.embeddings) {
+      const chunkId = await ctx.db.insert("knowledgeChunks", {
+        resumeId: file.resumeId,
+        sourceType: "audio_summary",
+        sourceId: args.transcriptionId as unknown as string,
+        text: e.content,
+        chunkIndex: e.chunkIndex,
+        hash: e.hash,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("vectors", {
+        resumeId: file.resumeId,
+        chunkId,
+        model: e.model,
+        dim: e.dim,
+        embedding: e.embedding,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    return null;
   },
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useRef, useCallback } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { useCreateBlockNote } from "@blocknote/react";
@@ -52,7 +52,7 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
   
   const file = useQuery(api.dynamicFiles.get, { id: fileId });
   const fileContent = useQuery(api.dynamicFileContent.get, { fileId });
-  const saveContentMutation = useMutation(api.dynamicFileContent.save);
+  const saveContentWithEmbeddings = useAction((api as any).embedActions.updatePageContentWithEmbeddings);
   
   // File upload mutations
   const generateUploadUrl = useMutation(api.fileUploads.generateUploadUrl);
@@ -128,7 +128,7 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
       console.log("Saving content:", serializedContent);
       
       // Save to database
-      await saveContentMutation({ 
+      await saveContentWithEmbeddings({ 
         fileId, 
         content: serializedContent 
       });
@@ -141,7 +141,7 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
     } finally {
       setIsSaving(false);
     }
-  }, [editor, fileId, isReadOnly, editorReady, saveContentMutation]);
+  }, [editor, fileId, isReadOnly, editorReady, saveContentWithEmbeddings]);
 
   // Load content when fileId changes or content loads
   useEffect(() => {
@@ -387,10 +387,10 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
         const blocks = editor.document;
         const serializedContent = JSON.parse(JSON.stringify(blocks));
         // Use the mutation directly since the component is unmounting
-        saveContentMutation({ fileId, content: serializedContent });
+        saveContentWithEmbeddings({ fileId, content: serializedContent });
       }
     };
-  }, [hasChanges, fileId, editor, editorReady, isReadOnly, saveContentMutation]);
+  }, [hasChanges, fileId, editor, editorReady, isReadOnly, saveContentWithEmbeddings]);
 
   // Manual save
   const handleManualSave = async () => {

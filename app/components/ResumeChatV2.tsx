@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, UIMessage, ToolUIPart, TextUIPart, ReasoningUIPart } from 'ai';
 import { useQuery } from "convex/react";
@@ -8,6 +8,7 @@ import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { Button } from "@/components/ui/button";
+import Image from "next/image";
 // AI elements UI kit
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageContent } from "@/components/ai-elements/message";
@@ -21,7 +22,15 @@ import {
   TaskItem,
   TaskTrigger,
 } from '@/components/ai-elements/task';
-import { CopyIcon, RefreshCwIcon, Edit2Icon, CheckIcon, BotIcon, UserIcon, XIcon, ArrowUpIcon, Plus } from "lucide-react";
+import {
+  PromptInput,
+  PromptInputBody,
+  PromptInputTextarea,
+  PromptInputToolbar,
+  PromptInputSubmit,
+  type PromptInputMessage,
+} from '@/components/ai-elements/prompt-input';
+import { CopyIcon, RefreshCwIcon, Edit2Icon, CheckIcon, BotIcon, UserIcon, XIcon, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CitationTooltip } from "@/components/ui/citation-tooltip";
 import { EchoCitationTooltip } from "@/components/ui/echo-citation-tooltip";
@@ -806,7 +815,31 @@ export function ResumeChatV2({ resumeId, className, onCitationClick: _onCitation
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editedText, setEditedText] = useState<string>("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Fetch resume data and owner profile
+  const resume = useQuery(api.resumes.get, { id: resumeId });
+  const [ownerProfile, setOwnerProfile] = useState<{
+    imageUrl?: string;
+    firstName?: string;
+    lastName?: string;
+  } | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+
+  // Fetch owner profile when resume loads
+  useEffect(() => {
+    if (resume?.userId) {
+      setProfileLoading(true);
+      fetch(`/api/user/${resume.userId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (!data.error) {
+            setOwnerProfile(data);
+          }
+        })
+        .catch(err => console.error('Failed to fetch owner profile:', err))
+        .finally(() => setProfileLoading(false));
+    }
+  }, [resume?.userId]);
 
   // Track message metrics
   const [messageMetrics, setMessageMetrics] = useState<Record<string, { startTime: number; endTime?: number; tokenEstimate?: number }>>({});
@@ -861,7 +894,6 @@ export function ResumeChatV2({ resumeId, className, onCitationClick: _onCitation
   }, [projects, bulletPointsByProject, dynamicFiles, branchesByBulletPoint]);
 
   const [input, setInput] = useState("");
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Always use GPT-OSS-120B for all chats
   // Web search is always enabled
   const webSearch = true;
@@ -882,10 +914,11 @@ export function ResumeChatV2({ resumeId, className, onCitationClick: _onCitation
     [resumeId, webSearch]
   );
 
-  const { messages, sendMessage, status, setMessages, error } = useChat({
+  const { messages, sendMessage, status, setMessages, error, stop } = useChat({
     id: `chat-${webSearch}`, // Use id to separate chats by web search
     transport,
     messages: initialMessages,
+    experimental_throttle: 35,
     onError: (error) => {
       console.error('[CLIENT] useChat error:', error);
       console.error('[CLIENT] Error stack:', error.stack);
@@ -924,11 +957,6 @@ export function ResumeChatV2({ resumeId, className, onCitationClick: _onCitation
     },
   });
 
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
   // Track start time for streaming messages separately
   useEffect(() => {
     const lastMessage = messages[messages.length - 1];
@@ -956,32 +984,31 @@ export function ResumeChatV2({ resumeId, className, onCitationClick: _onCitation
   // For now, we'll need to handle ID mapping extraction through a different approach
   // The backend will need to send the mapping as part of the streamed message
 
+  // Hardcoded suggestions - exactly 60 characters each
   const suggestedQuestions = [
-    "Give me an overview of this candidate",
-    "What are their key technical skills?",
-    "What's their work experience like?",
-    "What are their main achievements?"
+    "Tell me about my background and key experiences",
+    "What are my strongest technical skills and expertise?",
+    "Walk me through my most significant achievements",
+    "What makes me unique and valuable as a candidate?"
   ];
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-
-    console.log('[CLIENT] Sending message:', input);
-    // sendMessage handles message creation internally
-    sendMessage({ text: input });
-    setInput('');
-    // Reset textarea height after clearing
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = '48px';
+  const handlePromptSubmit = (message: PromptInputMessage, formEvent: React.FormEvent<HTMLFormElement>) => {
+    const text = message.text?.trim();
+    if (!text || status === 'submitted' || status === 'streaming') {
+      return;
     }
+
+    console.log('[CLIENT] Sending message:', text);
+    sendMessage({ text });
+    setInput('');
+    formEvent.currentTarget.reset();
   };
 
   const handleSuggestedQuestion = async (question: string) => {
     if (status !== 'submitted' && status !== 'streaming') {
       // sendMessage handles message creation internally
       sendMessage({ text: question });
+      setInput('');
     }
   };
 
@@ -1060,14 +1087,11 @@ export function ResumeChatV2({ resumeId, className, onCitationClick: _onCitation
   };
 
   const handleNewChat = () => {
+    stop();
     // Clear all messages
     setMessages([]);
     setMessageMetrics({});
     setInput('');
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = '48px';
-    }
   };
 
   return (
@@ -1097,16 +1121,45 @@ export function ResumeChatV2({ resumeId, className, onCitationClick: _onCitation
           {/* Notion-style greeting when no messages */}
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full max-w-3xl mx-auto px-4">
-              {/* Simple greeting */}
+              {/* Avatar with loading state */}
+              <div className="mb-6">
+                {profileLoading ? (
+                  <div className="w-20 h-20 rounded-full bg-neutral-100 dark:bg-neutral-800 ring-2 ring-neutral-200 dark:ring-neutral-700 flex items-center justify-center">
+                    <div className="w-6 h-6 border-2 border-neutral-300 border-t-neutral-600 rounded-full animate-spin"></div>
+                  </div>
+                ) : ownerProfile?.imageUrl ? (
+                  <div className="relative">
+                    <Image
+                      src={ownerProfile.imageUrl}
+                      alt={`${ownerProfile.firstName || resume?.name || 'User'}'s avatar`}
+                      width={80}
+                      height={80}
+                      className="rounded-full ring-2 ring-neutral-200 dark:ring-neutral-700"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-20 h-20 rounded-full bg-neutral-100 dark:bg-neutral-800 ring-2 ring-neutral-200 dark:ring-neutral-700 flex items-center justify-center">
+                    <span className="text-2xl font-medium text-neutral-600 dark:text-neutral-400">
+                      {(ownerProfile?.firstName || resume?.name || 'U')[0].toUpperCase()}
+                    </span>
+                  </div>
+                )}
+              </div>
+              
+              {/* First-person greeting with loading state */}
               <div className="text-center mb-12">
                 <h1 className="text-3xl font-light text-neutral-800 dark:text-neutral-200 mb-3" style={{
                   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
                   letterSpacing: '-0.02em'
                 }}>
-                  How can I help with this resume?
+                  {profileLoading ? (
+                    <>I&apos;m <span className="inline-block w-16 h-6 bg-neutral-200 dark:bg-neutral-700 rounded animate-pulse"></span>. How can I help?</>
+                  ) : (
+                    <>I&apos;m {ownerProfile?.firstName || resume?.name || 'here'}. How can I help?</>
+                  )}
                 </h1>
                 <p className="text-neutral-500 dark:text-neutral-400 text-base font-light">
-                  Ask me anything about the candidate&apos;s experience, skills, or qualifications
+                  I&apos;m your second mind — ask me about my experience and projects
                 </p>
               </div>
 
@@ -1176,6 +1229,8 @@ export function ResumeChatV2({ resumeId, className, onCitationClick: _onCitation
 
                         if (typeStr.includes('web_search')) {
                           displayName = 'Searching web';
+                        } else if (typeStr.includes('semantic_search')) {
+                          displayName = 'Searching by meaning';
                         } else if (typeStr.includes('search_content')) {
                           displayName = 'Searching content';
                         } else if (typeStr.includes('search_page_content')) {
@@ -1341,63 +1396,50 @@ export function ResumeChatV2({ resumeId, className, onCitationClick: _onCitation
             </div>
           )}
 
-          <div ref={messagesEndRef} />
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
 
-      {/* Modern chat input - ChatGPT/Claude style */}
+      {/* Modern chat input leveraging ai-elements PromptInput */}
       <div className="border-t border-neutral-200/50 dark:border-neutral-800/50 bg-white dark:bg-neutral-950">
-        <div className="mx-auto max-w-3xl px-4 py-3">
-          <form onSubmit={handleSubmit} className="relative">
-            <div className="relative flex items-end">
-              <textarea
-                ref={textareaRef}
+        <div className="mx-auto max-w-3xl px-4 py-3 space-y-2">
+          <PromptInput
+            className="bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800"
+            onSubmit={handlePromptSubmit}
+          >
+            <PromptInputBody>
+              <PromptInputTextarea
                 value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                  // Auto-resize textarea
-                  e.target.style.height = 'auto';
-                  e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSubmit(e);
-                  }
-                }}
-                placeholder="Ask about this resume..."
-                rows={1}
-                className="w-full resize-none bg-neutral-50 dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 pl-4 pr-12 py-3 text-sm placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all"
-                style={{
-                  minHeight: '48px',
-                  maxHeight: '200px'
-                }}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder="Ask me about my experience..."
+                disabled={status === 'submitted'}
               />
-              {/* Send button inside input */}
-              <button
-                type="submit"
-                disabled={!input.trim() || status === 'streaming'}
-                className={cn(
-                  "absolute right-2 bottom-2 p-1.5 rounded-lg transition-all",
-                  input.trim() && status !== 'streaming'
-                    ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-100"
-                    : "bg-neutral-100 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-500 cursor-not-allowed"
-                )}
-              >
-                <ArrowUpIcon className="w-5 h-5" />
-              </button>
-            </div>
-            {/* Helper text */}
-            <div className="mt-2 px-1 flex items-center justify-between">
+            </PromptInputBody>
+            <PromptInputToolbar className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-xs text-neutral-400 dark:text-neutral-500">
                 Press Enter to send, Shift+Enter for new line
               </span>
-              <span className="text-xs text-neutral-400 dark:text-neutral-500">
-                Powered by Cerebras
-              </span>
-            </div>
-          </form>
+              <div className="flex items-center gap-3">
+                <span className="hidden text-xs text-neutral-400 dark:text-neutral-500 sm:inline">
+                  Powered by Cerebras Qwen 3 235B
+                </span>
+                <PromptInputSubmit
+                  status={status}
+                  disabled={status === 'submitted' || (status !== 'streaming' && !input.trim())}
+                  onClick={(event) => {
+                    if (status === 'streaming') {
+                      event.preventDefault();
+                      stop();
+                    }
+                  }}
+                />
+              </div>
+            </PromptInputToolbar>
+          </PromptInput>
+          <div className="flex items-center justify-between text-xs text-neutral-400 dark:text-neutral-500 sm:hidden">
+            <span>Press Enter to send, Shift+Enter for new line</span>
+            <span>Powered by Cerebras Qwen 3 235B</span>
+          </div>
         </div>
       </div>
     </div>

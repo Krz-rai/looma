@@ -6,8 +6,25 @@ import { httpAction } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import type { LanguageModelV2Middleware, LanguageModelV2StreamPart } from '@ai-sdk/provider';
 import { createOpenAI } from '@ai-sdk/openai';
+import { createCerebras } from '@ai-sdk/cerebras';
 
 const http = httpRouter();
+
+const RESUME_CHAT_MODEL_ID = 'qwen-3-235b-a22b-instruct-2507';
+
+let cerebrasProvider: ReturnType<typeof createCerebras> | null = null;
+
+function getCerebrasProvider() {
+  if (!cerebrasProvider) {
+    const apiKey = process.env.CEREBRAS_API_KEY;
+    if (!apiKey) {
+      throw new Error('CEREBRAS_API_KEY is not set');
+    }
+    cerebrasProvider = createCerebras({ apiKey });
+    console.log('🔐 [MODEL] Initialized Cerebras provider for resume chat');
+  }
+  return cerebrasProvider;
+}
 
 // Simple in-memory cache with TTL
 const responseCache = new Map<string, { data: any; timestamp: number }>();
@@ -218,8 +235,8 @@ const piiRedactionMiddleware: LanguageModelV2Middleware = {
 // Default settings middleware - applies consistent defaults
 const defaultSettings = defaultSettingsMiddleware({
   settings: {
-    temperature: 0.3,
-    maxOutputTokens: 3000,  // Reduced from 20000 to prevent token overuse
+    temperature: 1,
+    maxOutputTokens: 5000,  // Reduced from 20000 to prevent token overuse
   },
 });
 
@@ -233,9 +250,19 @@ const allMiddleware = [
   // reasoningMiddleware removed - GPT-5 handles reasoning via providerOptions
 ];
 
+// Shared smooth streaming transform for consistent UX across endpoints
+// Apply word-based smoothing so responses stream at a conversational pace.
+const smoothStreaming = smoothStream({
+  chunking: 'word',
+  delayInMs: 28,
+});
+
 
 // Helper function to create wrapped Cerebras model
-function createWrappedCerebrasModel(cerebras: any, modelName: string = 'gpt-oss-120b') {
+function createWrappedCerebrasModel(
+  cerebras: ReturnType<typeof createCerebras>,
+  modelName: string = RESUME_CHAT_MODEL_ID
+) {
   console.log(`🚀 [MODEL] Creating wrapped Cerebras ${modelName} with middleware`);
   console.log(`🔧 [MODEL] Middleware count: ${allMiddleware.length}`);
   console.log(`🔧 [MODEL] Middleware names: defaultSettings, logging, caching, rateLimit, piiRedaction`);
@@ -419,56 +446,123 @@ http.route({
     }).join('\n');
 
     // OPTIMIZED system prompt - structured for AI clarity
-    const systemPrompt = `You are Aurea, an AI assistant analyzing candidate ${resume.name || resumeData.title}.
+    const systemPrompt = `You are ${resume.name || resumeData.title}'s second mind. You speak as the candidate in first person.
 
-DATA_SOURCES:
-- Projects: ${resumeData.projects.length} total (fetch via fetch_resume_data)
-- Portfolio: ${resume.portfolio ? 'Available' : 'None'}
-- Documentation: ${publicPages.length} pages available
+You are an **evidence-first digital twin**.  
+Your role: Answer as me using only content from my resume, projects, portfolio, and documentation.  
+Decline all unrelated queries unless it's a **medical or emergency situation**.  
 
-TOOL_SELECTION:
-- If query involves "projects" or "experience" → fetch_resume_data
-- If query involves "specific detail" → search_content
-- If query involves "portfolio" → scrape_portfolio
-- Otherwise → fetch_resume_data
+### Instructions
+- Always be proactive: run the full retrieval workflow automatically.  
+- Normalize queries: silently correct typos, handle pluralization, and expand synonyms.  
+- Resolve pronouns: "I/me/my" refers to the candidate, "you" refers to the recruiter asking questions.  
+- For sensitive traits (personality/health), only use **my self-described, explicit statements**. Avoid speculation.  
+- Be evidence-first: every factual claim about me must include an immediate citation.  
+- Use the **Answer Structure Template** strictly.  
+- Hide orchestration chatter (like "Searching content"). Final output must be clean.
 
-RESPONSE_REQUIREMENTS:
-1. Always format responses in clear Markdown:
-   - #, ##, ### for headers
-   - **bold**, *italics*, bullet lists, numbered lists
-   - \`inline code\` and fenced \`\`\` code blocks \`\`\`
-   - > blockquotes
-   - [Links](url), tables, --- separators
-   - - [ ] / - [x] for task lists
-   - $inline$ / $$block$$ math when needed
-   - Proper paragraph spacing for readability
+---
 
-2. **Citation Placement (critical)**  
-   - Every factual claim must have an immediate citation, on the same line.  
-   - No standalone citation lines.
+### MY DATA SOURCES
+- My Projects: ${resumeData.projects.length} total (fetch via fetch_resume_data)  
+- My Portfolio: ${resume.portfolio ? 'Available' : 'None'}  
+- My Documentation: ${publicPages.length} pages available  
 
-3. **Citation Formats (strict)**  
-   - Projects: [Project:"title"]{P#}  
-   - Resume bullets: [Bullet:"brief text"]{B#}  
-   - Page content: [PageTitle L#]{PG#} (use actual title)  
-   - Echo points: [Echo P#]{PG#}  
-   - Portfolio: [Portfolio:"context"]{portfolio}  
-   - Web: [Web: domain]{web}  
+---
 
-4. Rules:  
-   - Do not output placeholder names like "PageTitle".  
-   - Include specific metrics whenever available.  
-   - Do not produce content outside the scope of resume/projects/portfolio/docs.  
-   - Decline all unrelated queries unless it’s a **medical or emergency situation**.
+### TOOL_SELECTION
+- Query involves *my projects* or *my experience* → fetch_resume_data  
+- Query involves *exact quotes*, *specific text*, *find where it says* → search_content (then fallback)  
+- Query involves *related topics*, *similar to*, *meaning-based search* → semantic_search + search_content  
+- Query involves *my portfolio* → scrape_portfolio  
+- Query involves *specific page content* → search_page_content  
+- Otherwise → fetch_resume_data  
+
+---
+
+### RETRIEVAL STRATEGY (Multi-Step Fallback)
+1. PRIMARY → search_content for exact quotes (with citations)  
+2. IF NONE → semantic_search to discover concepts and my phrasing variants  
+3. IF SEMANTIC HIT → search_page_content to fetch the full page (with line numbers)  
+4. ALWAYS CITE → Every claim about me must include a proper citation in {PG#} format with line numbers  
+
+---
+
+### SEMANTIC SEARCH WORKFLOW
+1. semantic_search → discover relevant concepts about me (no citations yet)  
+2. search_content → find exact quotes with proper citations  
+3. Combine both → final answer with comprehensive coverage and citations  
+
+---
+
+### FALLBACK WORKFLOW (Example)
+1. search_content("term") → No results  
+2. semantic_search("related concepts") → Finds "Project Alpha" context  
+3. search_page_content("Project Alpha") → Gets full page with line numbers  
+4. Response: *"I mentioned [relevant content] [Project Alpha L15]{PG2}"*  
+
+---
+
+### CITATION RULES
+- **Placement**: Inline with the claim, same line (no standalone lines)  
+- **Strict formats**:  
+  - Projects → [Project:"title"]{P#}  
+  - Resume bullets → [Bullet:"brief text"]{B#}  
+  - Branches → [Branch:"brief text"]{BR#}  
+  - Page content → [PageTitle L#]{PG#}  
+  - Echo points → [Echo P#]{PG#}  
+  - Portfolio → [Portfolio:"context"]{portfolio}  
+  - Web → [Web: domain]{web}  
+- **Wrong** ❌: “in the Mobile Banking App project” (no citation)  
+- **Right** ✅: “mentioned in [Mobile Banking App]{P3}”  
+
+---
+
+### RESPONSE REQUIREMENTS
+- Format all responses in **Markdown**:
+  - Headers (#, ##, ###)  
+  - **bold**, *italics*, bullet lists, numbered lists  
+  - inline code and fenced code blocks  
+  - > blockquotes  
+  - [Links](url), tables, --- separators  
+  - - [ ] / - [x] for task lists  
+  - $inline$ / $$block$$ math when needed  
+
+---
+
+### RESPONSE STYLE
+- **Natural conversation**: Answer in first person as if speaking directly to the recruiter
+- **Always cite**: Every factual claim must include proper citations inline
+- **Be specific**: Use exact quotes and measurable details when available
+- **Stay authentic**: Speak naturally while backing up claims with evidence
+- **Keep it flowing**: Avoid rigid templates - just cite as you go
+
+### CITATION REQUIREMENTS
+- **Inline citations**: Place citations immediately after the claim, same line
+- **No citation sections**: Don't list sources separately - cite as you speak
+- **Evidence-based**: Only make claims you can back up with citations
+- **Quote directly**: Use exact quotes from my materials when possible
+
+### ERROR HANDLING
+- If no evidence found → say "I don't have specific information about that in my materials"
+- If uncertain → acknowledge uncertainty and suggest what might help
+- If conflicting info → reconcile or note the discrepancy
+
+### OUTPUT GUIDELINES
+- **Natural flow**: Write like you're having a conversation, not filling out a form
+- **Cite as you go**: [Project:"name"]{P#} or [Bullet:"text"]{B#} immediately after claims
+- **Be conversational**: "I developed..." rather than "**My response:** I developed..."
+- **Stay focused**: Answer the question directly without unnecessary structure  
+
+---
 
     ${conversationContext || 'No previous conversation'}`;
     const lastMessages = messages.slice(-5);  // Reduced from 10 to save tokens
 
-    // Use OpenAI GPT-4o for high-quality responses
-    const openai = createOpenAI({
-      apiKey: process.env.OPENAI_API_KEY!,
-    });
-    const model = createWrappedOpenAIModel(openai, 'gpt-4o');
+    // Use Cerebras Qwen 3 235B Instruct for candidate-first responses
+    const cerebras = getCerebrasProvider();
+    const model = createWrappedCerebrasModel(cerebras, RESUME_CHAT_MODEL_ID);
+    console.log(`⚡ Using Cerebras model ${RESUME_CHAT_MODEL_ID} for resume chat`);
 
     // Estimate input tokens before sending
     const inputTokenEstimate = Math.ceil((systemPrompt.length +
@@ -543,92 +637,104 @@ RESPONSE_REQUIREMENTS:
         },
       });
 
-      // Add content search tool for finding specific text
+      // Add exact text search tool for finding specific quotes and phrases
       tools.search_content = tool({
-        description: "Search for specific text, quotes, or phrases within all pages and echoes. Use this when looking for exact statements, quotes, or specific information.",
+        description: "Search for specific text, quotes, or phrases within all resume content including projects, bullets, branches, pages, and echoes. Use this when looking for exact statements, quotes, or specific information.",
         inputSchema: z.object({
           query: z.string().describe("The text to search for (e.g., 'overdramatic', 'fraud detection', 'accuracy')"),
-          searchIn: z.enum(["all", "pages", "echoes"]).optional().default("all").describe("Where to search: all content, only pages, or only echoes"),
+          searchIn: z.enum(["all", "pages", "echoes", "resume"]).optional().default("all").describe("Where to search: all content, only pages, only echoes, or only resume data"),
           limit: z.number().optional().default(5).describe("Maximum number of results to return"),
         }),
         execute: async ({ query, searchIn = "all", limit = 5 }) => {
-          console.log(`🔎 [TOOL START] Searching content for: "${query}" in ${searchIn}`);
-          console.log(`📋 [TOOL] Parameters: query="${query}", searchIn="${searchIn}", limit=${limit}`);
-          console.log(`🆔 [TOOL] Resume ID: ${resumeId}`);
+          console.log(`🔎 [EXACT] Searching for exact text: "${query}" in ${searchIn}`);
+          console.log(`📋 [EXACT] Parameters: query="${query}", searchIn="${searchIn}", limit=${limit}`);
 
           try {
-            console.log(`🔄 [TOOL] Calling ctx.runQuery...`);
             const searchResult = await ctx.runQuery(api.contentSearch.searchContent, {
               resumeId,
               searchQuery: query,
               includePages: searchIn === "all" || searchIn === "pages",
               includeAudio: searchIn === "all" || searchIn === "echoes",
+              includeResume: searchIn === "all" || searchIn === "resume",
               limit,
             });
-            console.log(`✅ [TOOL] Query completed, got result:`, JSON.stringify(searchResult, null, 2).slice(0, 500));
 
-          if (searchResult.results.length === 0) {
-            console.log(`❌ [TOOL] No results found for "${query}"`);
-            const emptyResponse = {
-              success: false,
-              message: `No matches found for "${query}"`,
-              results: [],
-            };
-            console.log(`🔚 [TOOL] Returning empty response:`, emptyResponse);
-            return emptyResponse;
-          }
-
-          console.log(`✅ [TOOL] Found ${searchResult.results.length} results for "${query}"`);
-          console.log(`📊 [TOOL] Processing results...`);
-
-          // Format results for AI consumption
-          const formattedResults = searchResult.results.map((result: any) => {
-            if (result.type === 'page') {
-              const pageSimpleId = idMap.forward[result.pageId] || result.pageId;
+            if (searchResult.results.length === 0) {
               return {
-                type: 'page',
-                pageTitle: result.pageTitle,
-                pageId: pageSimpleId,
-                lineNumber: result.lineNumber,
-                matchedText: result.matchedText,
-                context: result.context,
-                citation: `[${result.pageTitle} L${result.lineNumber}]{${pageSimpleId}}`,
-              };
-            } else if (result.type === 'echo') {
-              const pageSimpleId = idMap.forward[result.pageId] || result.pageId;
-              const pointNumber = result.globalPointNumber || 1;
-
-              // Simple citation format without embedded text
-              const citation = `[Echo P${pointNumber}]{${pageSimpleId}}`;
-
-              return {
-                type: 'echo',
-                fileName: result.displayName || result.fileName,
-                pageTitle: result.pageTitle,
-                timestamp: result.timestamp,
-                matchedText: result.matchedText,
-                citation: citation,
-                note: `This is echo point ${pointNumber} from "${result.pageTitle}" page`,
+                success: false,
+                message: `No exact matches found for "${query}"`,
+                results: [],
               };
             }
-            return result;
-          });
 
-          const finalResponse = {
-            success: true,
-            query: searchResult.query,
-            totalFound: searchResult.totalFound,
-            results: formattedResults,
-          };
-          console.log(`✨ [TOOL] Final response prepared, ${formattedResults.length} formatted results`);
-          console.log(`📤 [TOOL] Returning response:`, JSON.stringify(finalResponse, null, 2).slice(0, 500));
-          return finalResponse;
+            // Format results for AI consumption
+            const formattedResults = searchResult.results.map((result: any) => {
+              if (result.type === 'page') {
+                const pageSimpleId = idMap.forward[result.pageId] || result.pageId;
+                return {
+                  type: 'page',
+                  pageTitle: result.pageTitle,
+                  pageId: pageSimpleId,
+                  lineNumber: result.lineNumber,
+                  matchedText: result.matchedText,
+                  context: result.context,
+                  citation: `[${result.pageTitle} L${result.lineNumber}]{${pageSimpleId}}`,
+                };
+              } else if (result.type === 'echo') {
+                const pageSimpleId = idMap.forward[result.pageId] || result.pageId;
+                const pointNumber = result.globalPointNumber || 1;
+
+                return {
+                  type: 'echo',
+                  fileName: result.displayName || result.fileName,
+                  pageTitle: result.pageTitle,
+                  timestamp: result.timestamp,
+                  matchedText: result.matchedText,
+                  citation: `[Echo P${pointNumber}]{${pageSimpleId}}`,
+                  note: `This is echo point ${pointNumber} from "${result.pageTitle}" page`,
+                };
+              } else if (result.type === 'project') {
+                const projectSimpleId = idMap.forward[result.projectId] || result.projectId;
+                return {
+                  type: 'project',
+                  projectTitle: result.projectTitle,
+                  matchedText: result.matchedText,
+                  context: result.context,
+                  citation: `[${result.projectTitle}]{${projectSimpleId}}`,
+                };
+              } else if (result.type === 'bullet') {
+                const bulletSimpleId = idMap.forward[result.bulletId] || result.bulletId;
+                return {
+                  type: 'bullet',
+                  projectTitle: result.projectTitle,
+                  matchedText: result.matchedText,
+                  context: result.context,
+                  citation: `[${result.projectTitle} - Bullet]{${bulletSimpleId}}`,
+                };
+              } else if (result.type === 'branch') {
+                const branchSimpleId = idMap.forward[result.branchId] || result.branchId;
+                return {
+                  type: 'branch',
+                  projectTitle: result.projectTitle,
+                  matchedText: result.matchedText,
+                  context: result.context,
+                  citation: `[${result.projectTitle} - Branch]{${branchSimpleId}}`,
+                };
+              }
+              return result;
+            });
+
+            return {
+              success: true,
+              query: searchResult.query,
+              totalFound: searchResult.totalFound,
+              results: formattedResults,
+            };
           } catch (error) {
-            console.error(`💥 [TOOL] Error in search_content:`, error);
-            console.error(`🔍 [TOOL] Error stack:`, error instanceof Error ? error.stack : 'No stack');
+            console.error(`❌ [EXACT] Error in search_content:`, error);
             return {
               success: false,
-              message: `Error during search: ${error instanceof Error ? error.message : String(error)}`,
+              message: `Error during exact search: ${error instanceof Error ? error.message : String(error)}`,
               results: [],
             };
           }
@@ -709,6 +815,76 @@ RESPONSE_REQUIREMENTS:
         },
       });
 
+      // Add semantic search tool for finding related content by meaning
+      tools.semantic_search = tool({
+        description: "Search for content by meaning/semantics to DISCOVER relevant topics and concepts. This tool does NOT provide citations - use it to find what to look for, then use search_content for exact quotes with proper citations.",
+        inputSchema: z.object({
+          query: z.string().describe("What you're looking for, described naturally (e.g., 'machine learning projects', 'leadership experience', 'technical challenges')"),
+          limit: z.number().optional().default(8).describe("Maximum number of results to return"),
+          sourceTypes: z.array(z.enum(["bullet_point", "project", "branch", "page", "audio_summary"])).optional().describe("Filter by content types"),
+          minScore: z.number().optional().default(0.15).describe("Minimum similarity score (0-1, higher = more similar)"),
+        }),
+        execute: async ({ query, limit = 8, sourceTypes, minScore = 0.15 }) => {
+          console.log(`🧠 [SEMANTIC] Searching for: "${query}"`);
+          console.log(`📋 [SEMANTIC] Parameters: limit=${limit}, sourceTypes=${sourceTypes?.join(',') || 'all'}, minScore=${minScore}`);
+
+          try {
+            const searchResult = await ctx.runAction((api as any).semanticSearch.searchKnowledgeAdvanced, {
+              query,
+              resumeId,
+              limit,
+              sourceTypes,
+              minScore,
+            });
+
+            console.log(`✅ [SEMANTIC] Found ${searchResult.results.length} results (filtered: ${searchResult.filteredByScore} by score, ${searchResult.filteredByType} by type)`);
+
+            if (searchResult.results.length === 0) {
+              return {
+                success: false,
+                message: `No semantically relevant content found for "${query}"`,
+                results: [],
+                stats: {
+                  totalFound: 0,
+                  filteredByScore: searchResult.filteredByScore,
+                  filteredByType: searchResult.filteredByType,
+                },
+              };
+            }
+
+            // Format results without citations - semantic search is for discovery only
+            const formattedResults = searchResult.results.map((result: any) => ({
+              sourceType: result.sourceType,
+              text: result.text,
+              score: Math.round(result.score * 100) / 100,
+              context: result.metadata?.title || result.metadata?.projectTitle || `${result.sourceType} content`,
+              chunkIndex: result.chunkIndex,
+            }));
+
+            return {
+              success: true,
+              message: `Found ${searchResult.results.length} semantically relevant results`,
+              results: formattedResults,
+              stats: {
+                totalFound: searchResult.results.length,
+                filteredByScore: searchResult.filteredByScore,
+                filteredByType: searchResult.filteredByType,
+                queryTime: searchResult.queryEmbeddingTime,
+                searchTime: searchResult.searchTime,
+              },
+            };
+
+          } catch (error) {
+            console.error(`❌ [SEMANTIC] Error:`, error);
+            return {
+              success: false,
+              message: `Semantic search failed: ${error}`,
+              results: [],
+            };
+          }
+        },
+      });
+
       // Add tool to fetch resume data on demand instead of embedding it all in context
       tools.fetch_resume_data = tool({
         description: "Get resume projects and structure. USE THIS FIRST for project questions.",
@@ -760,15 +936,12 @@ RESPONSE_REQUIREMENTS:
       // Use auto instead of required to reduce unnecessary tool calls
       toolChoice: 'auto',
       temperature: 0.3,
-      stopWhen: stepCountIs(5),  // Reduced from 20 to prevent excessive tool calls
+      stopWhen: stepCountIs(20),  // Reduced from 20 to prevent excessive tool calls
       // Pass the tools object (may be empty)
       tools: Object.keys(tools).length > 0 ? tools : undefined,
       // Add smooth streaming for better UX
-      experimental_transform: smoothStream({
-        delayInMs: 15,  // Slightly faster than default for snappy feel
-        chunking: 'word' // Word-by-word streaming for natural reading
-      }),
-    onError({ error }) {
+      experimental_transform: smoothStreaming,
+      onError({ error }) {
       console.error("💥 [STREAM] streamText error:", error);
       console.error("🔍 [STREAM] Error details:", JSON.stringify(error, null, 2));
       if (error instanceof Error) {
@@ -797,7 +970,8 @@ RESPONSE_REQUIREMENTS:
       if (event.toolCalls && event.toolCalls.length > 0) {
         console.log(`🔧 [STREAM] Tool calls made: ${event.toolCalls.length}`);
         event.toolCalls.forEach((call: any, i: number) => {
-          console.log(`  Tool ${i+1}: ${call.toolName} - Args: ${JSON.stringify(call.args).slice(0, 100)}`);
+          const argsStr = call.args ? JSON.stringify(call.args) : 'undefined';
+          console.log(`  Tool ${i+1}: ${call.toolName} - Args: ${argsStr.slice(0, 100)}`);
         });
       } else {
         console.log('🔧 [STREAM] No tool calls made');
@@ -873,6 +1047,7 @@ http.route({
     // Get the connected page content if available
     let pageContent = null;
     let pageTitle = null;
+    let resumeContext = '';
     if (connectedPageId) {
       const pageResult = await ctx.runQuery(api.dynamicFiles.getPublicPageContent, {
         resumeId,
@@ -909,27 +1084,44 @@ http.route({
       }
     }
 
+    // Optionally add broader resume context to help narrative framing
+    if (resumeId) {
+      try {
+        const resume = await ctx.runQuery(api.resumes.get, { id: resumeId });
+        if (resume) {
+          const nameOrTitle = resume.name || resume.title || 'Candidate';
+          const focus = resume.description || '';
+          resumeContext = `\nCandidate Context: ${nameOrTitle}\nFocus: ${focus}`;
+        }
+      } catch (e) {
+        // Non-fatal; continue without resume context
+      }
+    }
+
     // Define the schema for bullet analysis
     const bulletAnalysisSchema = z.object({
-      opinion1: z.string().describe("Core achievement or technical insight (max 15 words)"),
-      citation1: z.string().describe("Brief quote or reference from the source that supports opinion1"),
-      opinion2: z.string().describe("Key metric, impact, or result (max 15 words)"),
-      citation2: z.string().describe("Brief quote or reference from the source that supports opinion2"),
+      opinion1: z.string().describe("Narrative micro-story linking context → action → outcome (≤ 18 words)"),
+      citation1: z.string().describe("Short supporting quote or [L#] line ref that grounds opinion1"),
+      opinion2: z.string().describe("Second micro-story emphasizing measurable impact or scope (≤ 18 words)"),
+      citation2: z.string().describe("Short supporting quote or [L#] line ref that grounds opinion2"),
     });
 
     // Simplified prompt for structured output
-    const systemPrompt = `Analyze this bullet point to extract key insights and supporting citations.
+    const systemPrompt = `Craft a narrative analysis that situates this bullet within the broader story of the candidate's work.
 
 Bullet: "${bulletPoint.content}"
 
 ${pageContent ? `Source content:
 ${pageContent.split('\n').slice(0, 20).join('\n')}` : ''}
+${resumeContext}
 
 Instructions:
-- Extract two key insights from the bullet point
-- Provide supporting citations from the source content
-- Be extremely concise and specific
-- Focus on technical achievements and measurable impacts`;
+- Write 2 micro-stories (not restatements) capturing context → action → outcome
+- Pull context from the connected page when present; otherwise infer cautiously from the bullet
+- Prioritize measurable impact, scope, and the candidate's unique contribution
+- Keep each micro-story concise (≤ 18 words)
+- For each micro-story, include a brief supporting citation (quote or [L#] line) from the source content
+- Avoid generic summaries; be specific and narrative-driven`;
 
     // Use OpenAI GPT-4o for structured output support
     const openai = createOpenAI({
@@ -944,25 +1136,28 @@ Instructions:
 
       // Define the schema for bullet analysis
       const bulletAnalysisSchema = z.object({
-        opinion1: z.string().describe("Core achievement or technical insight (max 15 words)"),
-        citation1: z.string().describe("Brief quote or reference from the source that supports opinion1"),
-        opinion2: z.string().describe("Key metric, impact, or result (max 15 words)"),
-        citation2: z.string().describe("Brief quote or reference from the source that supports opinion2"),
+        opinion1: z.string().describe("Narrative micro-story linking context → action → outcome (≤ 18 words)"),
+        citation1: z.string().describe("Short supporting quote or [L#] line ref that grounds opinion1"),
+        opinion2: z.string().describe("Second micro-story emphasizing measurable impact or scope (≤ 18 words)"),
+        citation2: z.string().describe("Short supporting quote or [L#] line ref that grounds opinion2"),
       });
 
       // Structured prompt for better results
-      const systemPrompt = `Analyze this bullet point to extract key insights and supporting citations.
+      const systemPrompt = `Craft a narrative analysis that situates this bullet within the broader story of the candidate's work.
 
 Bullet: "${bulletPoint.content}"
 
 ${pageContent ? `Source content:
 ${pageContent.split('\n').slice(0, 20).join('\n')}` : ''}
+${resumeContext}
 
 Instructions:
-- Extract two key insights from the bullet point
-- Provide supporting citations from the source content
-- Be extremely concise and specific
-- Focus on technical achievements and measurable impacts`;
+- Write 2 micro-stories (not restatements) capturing context → action → outcome
+- Pull context from the connected page when present; otherwise infer cautiously from the bullet
+- Prioritize measurable impact, scope, and the candidate's unique contribution
+- Keep each micro-story concise (≤ 18 words)
+- For each micro-story, include a brief supporting citation (quote or [L#] line) from the source content
+- Avoid generic summaries; be specific and narrative-driven`;
 
       const result = await generateObject({
         model,
@@ -1020,11 +1215,8 @@ http.route({
 
     const lastMessages = messages.slice(-5);  // Reduced from 10 to save tokens
 
-    // Use Cerebras GPT-OSS-120B for all chat endpoints
-    const { createCerebras } = await import('@ai-sdk/cerebras');
-    const cerebras = createCerebras({
-      apiKey: process.env.CEREBRAS_API_KEY!,
-    });
+    // Use Cerebras GPT-OSS-120B for the simple chat endpoint
+    const cerebras = getCerebrasProvider();
 
     const result = streamText({
       model: createWrappedCerebrasModel(cerebras, 'gpt-oss-120b'),
@@ -1041,10 +1233,7 @@ http.route({
       messages: convertToModelMessages(lastMessages),
       stopWhen: stepCountIs(10),
       // Add smooth streaming
-      experimental_transform: smoothStream({
-        delayInMs: 12,
-        chunking: 'word'
-      }),
+      experimental_transform: smoothStreaming,
       tools: {
         search_page_content: tool({
           description:
@@ -1284,12 +1473,12 @@ http.route({
 
       // Define the schema for echo analysis - supports up to 3 insights
       const echoAnalysisSchema = z.object({
-        opinion1: z.string().describe("Core insight or contextual analysis (max 15 words)"),
-        citation1: z.string().describe("Brief quote or timestamp reference that supports opinion1"),
-        opinion2: z.string().describe("Key connection or deeper meaning (max 15 words)"),
-        citation2: z.string().describe("Brief quote or timestamp reference that supports opinion2"),
-        opinion3: z.string().optional().describe("Additional insight or future implication (max 15 words) - optional"),
-        citation3: z.string().optional().describe("Brief quote or timestamp reference that supports opinion3 - optional"),
+        opinion1: z.string().describe("Narrative micro-story connecting prior context → spoken point → implication (≤ 18 words)"),
+        citation1: z.string().describe("Short timestamped quote that grounds opinion1 (e.g., 1:23 | text)"),
+        opinion2: z.string().describe("Second micro-story highlighting skill growth or decision rationale (≤ 18 words)"),
+        citation2: z.string().describe("Short timestamped quote that grounds opinion2 (e.g., 2:05 | text)"),
+        opinion3: z.string().optional().describe("Optional micro-story about trajectory or future direction (≤ 18 words)"),
+        citation3: z.string().optional().describe("Short timestamped quote grounding opinion3"),
       });
 
       // Format timestamps properly
@@ -1314,7 +1503,7 @@ Focus: ${resume.description || 'Technology professional'}`;
       }
 
       // Structured prompt
-      const systemPrompt = `Analyze this echo point to extract key insights and connections.
+      const systemPrompt = `Write narrative micro-analyses that place this echo within the larger story of the conversation/candidate.
 
 Echo Point: "${summaryPoint}"
 
@@ -1323,12 +1512,11 @@ ${sourceContext}
 ${resumeContext}
 
 Instructions:
-- Extract 2-3 key insights from the echo point
-- Provide a third insight if the content is particularly rich or meaningful
-- Connect insights to professional growth or technical expertise
-- Be extremely concise and specific (max 15 words per insight)
-- Focus on career relevance and skill demonstrations
-- The third insight (opinion3/citation3) is optional - only use if valuable`;
+- Produce 2–3 micro-stories (not restatements) capturing context → statement → implication
+- Tie each story to professional growth, decision-making, or capability demonstrated
+- Keep each micro-story concise (≤ 18 words) and specific
+- Use a short timestamped quote to ground each story (e.g., 1:23 | exact phrase)
+- Only include a third story when it adds genuine narrative value`;
 
       const result = await generateObject({
         model,

@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 
 export const list = query({
   args: {
@@ -64,18 +64,22 @@ export const get = query({
   },
 });
 
-export const create = mutation({
+export const create = internalMutation({
   args: {
     projectId: v.id("projects"),
     content: v.string(),
     position: v.optional(v.number()),
+    embeddings: v.array(v.object({
+      content: v.string(),
+      chunkIndex: v.number(),
+      hash: v.string(),
+      model: v.string(),
+      dim: v.number(),
+      embedding: v.array(v.float64()),
+    })),
   },
+  returns: v.id("bulletPoints"),
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Not authenticated");
-    }
-    
     const project = await ctx.db.get(args.projectId);
     if (!project) {
       throw new Error("Project not found");
@@ -84,10 +88,6 @@ export const create = mutation({
     const resume = await ctx.db.get(project.resumeId);
     if (!resume) {
       throw new Error("Resume not found");
-    }
-    
-    if (resume.userId !== identity.subject) {
-      throw new Error("Not authorized");
     }
     
     let position = args.position;
@@ -111,8 +111,58 @@ export const create = mutation({
     
     await ctx.db.patch(project._id, { updatedAt: now });
     await ctx.db.patch(project.resumeId, { updatedAt: now });
-    
+
+    // Persist embeddings into unified knowledge base
+    for (const e of args.embeddings) {
+      const chunkId = await ctx.db.insert("knowledgeChunks", {
+        resumeId: project.resumeId,
+        sourceType: "bullet_point",
+        sourceId: bulletPointId as unknown as string,
+        text: e.content,
+        chunkIndex: e.chunkIndex,
+        hash: e.hash,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("vectors", {
+        resumeId: project.resumeId,
+        chunkId,
+        model: e.model,
+        dim: e.dim,
+        embedding: e.embedding,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
     return bulletPointId;
+  },
+});
+
+export const getProjectAndResume = internalQuery({
+  args: {
+    projectId: v.id("projects"),
+  },
+  returns: v.object({
+    projectId: v.id("projects"),
+    resumeId: v.id("resumes"),
+    resumeUserId: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const project = await ctx.db.get(args.projectId);
+    if (!project) {
+      throw new Error("Project not found");
+    }
+    const resume = await ctx.db.get(project.resumeId);
+    if (!resume) {
+      throw new Error("Resume not found");
+    }
+    return {
+      projectId: project._id,
+      resumeId: project.resumeId,
+      resumeUserId: resume.userId,
+    };
   },
 });
 

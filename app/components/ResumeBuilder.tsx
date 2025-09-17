@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { ProjectEditor } from "./ProjectEditor";
@@ -53,7 +53,7 @@ export function ResumeBuilder({ resumeId }: ResumeBuilderProps) {
   const resume = useQuery(api.resumes.get, { id: resumeId });
   const projects = useQuery(api.projects.list, { resumeId });
   const updateResume = useMutation(api.resumes.update);
-  const createProject = useMutation(api.projects.create);
+  const createProjectWithEmbeddings = useAction((api as any).embedActions.createProjectWithEmbeddings);
   const reorderProject = useMutation(api.projects.reorder);
   
   // Use optimistic updates if available, otherwise use real data
@@ -119,7 +119,7 @@ export function ResumeBuilder({ resumeId }: ResumeBuilderProps) {
 
   const handleAddProject = async () => {
     if (newProjectTitle.trim()) {
-      await createProject({
+      await createProjectWithEmbeddings({
         resumeId,
         title: newProjectTitle,
         description: newProjectDescription || undefined,

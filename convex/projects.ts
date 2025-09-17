@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 
 export const list = query({
   args: {
@@ -54,7 +54,78 @@ export const get = query({
   },
 });
 
-export const create = mutation({
+export const create = internalMutation({
+  args: {
+    resumeId: v.id("resumes"),
+    title: v.string(),
+    description: v.optional(v.string()),
+    position: v.optional(v.number()),
+    embeddings: v.array(v.object({
+      content: v.string(),
+      chunkIndex: v.number(),
+      hash: v.string(),
+      model: v.string(),
+      dim: v.number(),
+      embedding: v.array(v.float64()),
+    })),
+  },
+  returns: v.id("projects"),
+  handler: async (ctx, args) => {
+    const resume = await ctx.db.get(args.resumeId);
+    if (!resume) {
+      throw new Error("Resume not found");
+    }
+    
+    let position = args.position;
+    if (position === undefined) {
+      const existingProjects = await ctx.db
+        .query("projects")
+        .withIndex("by_resume", (q) => q.eq("resumeId", args.resumeId))
+        .collect();
+      position = existingProjects.length;
+    }
+    
+    const now = Date.now();
+    const projectId = await ctx.db.insert("projects", {
+      resumeId: args.resumeId,
+      title: args.title,
+      description: args.description,
+      position,
+      createdAt: now,
+      updatedAt: now,
+    });
+    
+    await ctx.db.patch(args.resumeId, { updatedAt: now });
+
+    // Persist embeddings into unified knowledge base
+    for (const e of args.embeddings) {
+      const chunkId = await ctx.db.insert("knowledgeChunks", {
+        resumeId: args.resumeId,
+        sourceType: "project",
+        sourceId: projectId as unknown as string,
+        text: e.content,
+        chunkIndex: e.chunkIndex,
+        hash: e.hash,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("vectors", {
+        resumeId: args.resumeId,
+        chunkId,
+        model: e.model,
+        dim: e.dim,
+        embedding: e.embedding,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    
+    return projectId;
+  },
+});
+
+export const createPublic = mutation({
   args: {
     resumeId: v.id("resumes"),
     title: v.string(),
@@ -98,6 +169,26 @@ export const create = mutation({
     await ctx.db.patch(args.resumeId, { updatedAt: now });
     
     return projectId;
+  },
+});
+
+export const getResume = internalQuery({
+  args: {
+    resumeId: v.id("resumes"),
+  },
+  returns: v.object({
+    _id: v.id("resumes"),
+    userId: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const resume = await ctx.db.get(args.resumeId);
+    if (!resume) {
+      throw new Error("Resume not found");
+    }
+    return {
+      _id: resume._id,
+      userId: resume.userId,
+    };
   },
 });
 

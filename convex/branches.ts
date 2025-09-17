@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 
 export const list = query({
   args: {
@@ -129,7 +129,90 @@ export const listByResume = query({
   },
 });
 
-export const create = mutation({
+export const create = internalMutation({
+  args: {
+    bulletPointId: v.id("bulletPoints"),
+    content: v.string(),
+    type: v.union(v.literal("text"), v.literal("audio"), v.literal("video")),
+    position: v.optional(v.number()),
+    embeddings: v.array(v.object({
+      content: v.string(),
+      chunkIndex: v.number(),
+      hash: v.string(),
+      model: v.string(),
+      dim: v.number(),
+      embedding: v.array(v.float64()),
+    })),
+  },
+  returns: v.id("branches"),
+  handler: async (ctx, args) => {
+    const bulletPoint = await ctx.db.get(args.bulletPointId);
+    if (!bulletPoint) {
+      throw new Error("Bullet point not found");
+    }
+    
+    const project = await ctx.db.get(bulletPoint.projectId);
+    if (!project) {
+      throw new Error("Project not found");
+    }
+    
+    const resume = await ctx.db.get(project.resumeId);
+    if (!resume) {
+      throw new Error("Resume not found");
+    }
+    
+    let position = args.position;
+    if (position === undefined) {
+      const existingBranches = await ctx.db
+        .query("branches")
+        .withIndex("by_bullet_point", (q) => q.eq("bulletPointId", args.bulletPointId))
+        .collect();
+      position = existingBranches.length;
+    }
+    
+    const now = Date.now();
+    const branchId = await ctx.db.insert("branches", {
+      bulletPointId: args.bulletPointId,
+      content: args.content,
+      type: args.type,
+      position,
+      createdAt: now,
+      updatedAt: now,
+    });
+    
+    await ctx.db.patch(bulletPoint._id, { hasBranches: true, updatedAt: now });
+    await ctx.db.patch(project._id, { updatedAt: now });
+    await ctx.db.patch(project.resumeId, { updatedAt: now });
+
+    // Persist embeddings into unified knowledge base
+    for (const e of args.embeddings) {
+      const chunkId = await ctx.db.insert("knowledgeChunks", {
+        resumeId: project.resumeId,
+        sourceType: "branch",
+        sourceId: branchId as unknown as string,
+        text: e.content,
+        chunkIndex: e.chunkIndex,
+        hash: e.hash,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("vectors", {
+        resumeId: project.resumeId,
+        chunkId,
+        model: e.model,
+        dim: e.dim,
+        embedding: e.embedding,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    
+    return branchId;
+  },
+});
+
+export const createPublic = mutation({
   args: {
     bulletPointId: v.id("bulletPoints"),
     content: v.string(),
@@ -185,6 +268,38 @@ export const create = mutation({
     await ctx.db.patch(project.resumeId, { updatedAt: now });
     
     return branchId;
+  },
+});
+
+export const getBulletPointAndResume = internalQuery({
+  args: {
+    bulletPointId: v.id("bulletPoints"),
+  },
+  returns: v.object({
+    bulletPointId: v.id("bulletPoints"),
+    projectId: v.id("projects"),
+    resumeId: v.id("resumes"),
+    resumeUserId: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const bulletPoint = await ctx.db.get(args.bulletPointId);
+    if (!bulletPoint) {
+      throw new Error("Bullet point not found");
+    }
+    const project = await ctx.db.get(bulletPoint.projectId);
+    if (!project) {
+      throw new Error("Project not found");
+    }
+    const resume = await ctx.db.get(project.resumeId);
+    if (!resume) {
+      throw new Error("Resume not found");
+    }
+    return {
+      bulletPointId: bulletPoint._id,
+      projectId: project._id,
+      resumeId: project.resumeId,
+      resumeUserId: resume.userId,
+    };
   },
 });
 

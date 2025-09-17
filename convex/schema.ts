@@ -33,6 +33,16 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_user_updated", ["userId", "updatedAt"]),
   
+
+  resumeEmbeddings: defineTable({
+    resumeId: v.id("resumes"),
+    embedding: v.array(v.float64()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_resume", ["resumeId"]),
+
+
   projects: defineTable({
     resumeId: v.id("resumes"),
     title: v.string(),
@@ -44,6 +54,30 @@ export default defineSchema({
   })
     .index("by_resume", ["resumeId"])
     .index("by_resume_position", ["resumeId", "position"]),
+  
+  projectEmbeddings: defineTable({
+    projectId: v.id("projects"),
+    embedding: v.array(v.float64()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId"]),
+  
+  bulletPointEmbeddings: defineTable({
+    bulletPointId: v.id("bulletPoints"),
+    embedding: v.array(v.float64()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_bullet_point", ["bulletPointId"]),
+  
+  branchEmbeddings: defineTable({
+    branchId: v.id("branches"),
+    embedding: v.array(v.float64()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_branch", ["branchId"]),
   
   bulletPoints: defineTable({
     projectId: v.id("projects"),
@@ -87,6 +121,15 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_file", ["fileId"]),
+
+  dynamicFileContentEmbeddings: defineTable({
+    dynamicFileId: v.id("dynamicFiles"),
+    embedding: v.array(v.float64()),
+    fileId: v.id("dynamicFileContent"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_dynamic_file", ["dynamicFileId"]),
 
   fileTemplates: defineTable({
     name: v.string(),
@@ -145,4 +188,58 @@ export default defineSchema({
   })
     .index("by_dynamic_file", ["dynamicFileId"])
     .index("by_status", ["status"]),
+
+  audioTranscriptionSummaryEmbeddings: defineTable({
+    transcriptionId: v.id("audioTranscriptions"),
+    embedding: v.array(v.float64()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_transcription", ["transcriptionId"])
+    .vectorIndex("by_embedding", {
+      vectorField: "embedding",
+      dimensions: 1536,
+      filterFields: ["transcriptionId"],
+      staged: false,
+    }),
+
+  // Unified knowledge base for the user's "mind"
+  knowledgeChunks: defineTable({
+    resumeId: v.id("resumes"),
+    sourceType: v.union(
+      v.literal("resume"),
+      v.literal("project"),
+      v.literal("bullet_point"),
+      v.literal("branch"),
+      v.literal("page"),
+      v.literal("audio_summary"),
+    ),
+    sourceId: v.string(),
+    text: v.string(),
+    chunkIndex: v.number(),
+    hash: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_resume", ["resumeId"]) 
+    .index("by_source", ["sourceType", "sourceId"]) 
+    .index("by_resume_and_hash", ["resumeId", "hash"]),
+
+  vectors: defineTable({
+    resumeId: v.id("resumes"),
+    chunkId: v.id("knowledgeChunks"),
+    model: v.string(), // e.g. "text-embedding-3-large"
+    dim: v.number(),
+    embedding: v.array(v.float64()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_resume_and_model", ["resumeId", "model"]) 
+    .index("by_chunk", ["chunkId"]) 
+    .vectorIndex("by_embedding_1536", {
+      vectorField: "embedding",
+      dimensions: 1536,
+      filterFields: ["resumeId", "model"],
+      staged: false,
+    }),
 });

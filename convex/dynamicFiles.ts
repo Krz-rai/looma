@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalQuery } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 
 export const list = query({
@@ -288,5 +288,31 @@ export const reorder = mutation({
         updatedAt: now,
       });
     }
+  },
+});
+
+export const getFileAndResume = internalQuery({
+  args: {
+    fileId: v.id("dynamicFiles"),
+  },
+  returns: v.object({
+    fileId: v.id("dynamicFiles"),
+    resumeId: v.id("resumes"),
+    resumeUserId: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const file = await ctx.db.get(args.fileId);
+    if (!file) {
+      throw new Error("File not found");
+    }
+    const resume = await ctx.db.get(file.resumeId);
+    if (!resume) {
+      throw new Error("Resume not found");
+    }
+    return {
+      fileId: file._id,
+      resumeId: file.resumeId,
+      resumeUserId: resume.userId,
+    };
   },
 });
