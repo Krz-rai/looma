@@ -3,7 +3,7 @@
 import React, { useState, useRef } from "react";
 import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "../convex/_generated/api";
-import { Id } from "../convex/_generated/dataModel";
+import { Id, Doc } from "../convex/_generated/dataModel";
 import { Upload, AudioLines, Loader2, Trash2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
@@ -232,7 +232,7 @@ export function AudioTranscriptionBlock({ dynamicFileId, isReadOnly = false }: A
           {(() => {
             let cumulativePointCount = 0;
 
-            return transcriptions.map((item) => {
+            return transcriptions.map((item: Doc<"audioTranscriptions">) => {
               const currentOffset = cumulativePointCount;
               // Add the number of points in this transcription to the cumulative count
               if (item.summary && item.summary.points) {

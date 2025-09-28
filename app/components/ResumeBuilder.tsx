@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
+import { Id, Doc } from "../../convex/_generated/dataModel";
 import { ProjectEditor } from "./ProjectEditor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,7 +53,7 @@ export function ResumeBuilder({ resumeId }: ResumeBuilderProps) {
   const resume = useQuery(api.resumes.get, { id: resumeId });
   const projects = useQuery(api.projects.list, { resumeId });
   const updateResume = useMutation(api.resumes.update);
-  const createProjectWithEmbeddings = useAction((api as any).embedActions.createProjectWithEmbeddings);
+  const createProjectWithEmbeddings = useAction(api.embedActions.createProjectWithEmbeddings);
   const reorderProject = useMutation(api.projects.reorder);
   
   // Use optimistic updates if available, otherwise use real data
@@ -164,8 +164,8 @@ export function ResumeBuilder({ resumeId }: ResumeBuilderProps) {
 
     if (!over || active.id === over.id || !projects) return;
 
-    const oldIndex = projects.findIndex((p) => p._id === active.id);
-    const newIndex = projects.findIndex((p) => p._id === over.id);
+    const oldIndex = projects.findIndex((p: Doc<"projects">) => p._id === active.id);
+    const newIndex = projects.findIndex((p: Doc<"projects">) => p._id === over.id);
 
     if (oldIndex !== -1 && newIndex !== -1) {
       // Create new order array for optimistic update
@@ -558,7 +558,7 @@ export function ResumeBuilder({ resumeId }: ResumeBuilderProps) {
               <div className="space-y-1.5">
                 <div className="text-xs font-medium text-muted-foreground/70">SKILLS</div>
                 <div className="flex flex-wrap gap-1.5">
-                  {resume.skills.map((skill, index) => (
+                  {resume.skills.map((skill: string, index: number) => (
                     <span
                       key={index}
                       className="px-2.5 py-1 bg-muted/50 rounded-md text-xs"
@@ -631,7 +631,7 @@ export function ResumeBuilder({ resumeId }: ResumeBuilderProps) {
             onDragEnd={handleDragEnd}
           >
             <SortableContext
-              items={displayProjects.map(p => p._id)}
+              items={displayProjects.map((p) => p._id)}
               strategy={verticalListSortingStrategy}
             >
               <div className="space-y-4">

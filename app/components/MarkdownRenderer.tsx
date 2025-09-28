@@ -51,6 +51,8 @@ export function MarkdownRenderer({
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex, rehypeHighlight, rehypeRaw]}
         components={{
+        // Treat <artifact> tags as transparent containers – actual rendering handled upstream
+        artifact: ({ children }) => <>{children}</>,
         // Custom code block with copy button
         pre: ({ children, ...props }) => {
           const codeElement = React.Children.toArray(children).find(
@@ -95,7 +97,7 @@ export function MarkdownRenderer({
         },
         // Inline code - Professional style
         code: ({ children, ...props }) => (
-          <code {...props} className="bg-neutral-100 dark:bg-neutral-800/50 rounded-md text-[85%] text-red-600 dark:text-red-400" style={{
+          <code {...props} className="bg-neutral-100 dark:bg-neutral-800/70 rounded-md text-[85%] text-neutral-800 dark:text-neutral-100" style={{
             fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace',
             padding: '0.125rem 0.375rem',
             marginLeft: '0.125rem',

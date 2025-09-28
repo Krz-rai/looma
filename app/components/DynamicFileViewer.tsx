@@ -52,7 +52,7 @@ export function DynamicFileViewer({ fileId, isReadOnly = false, highlightLine, o
   
   const file = useQuery(api.dynamicFiles.get, { id: fileId });
   const fileContent = useQuery(api.dynamicFileContent.get, { fileId });
-  const saveContentWithEmbeddings = useAction((api as any).embedActions.updatePageContentWithEmbeddings);
+  const saveContentWithEmbeddings = useAction(api.embedActions.updatePageContentWithEmbeddings);
   
   // File upload mutations
   const generateUploadUrl = useMutation(api.fileUploads.generateUploadUrl);

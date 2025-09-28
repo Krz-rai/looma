@@ -1,5 +1,12 @@
 import { IdMapping } from '@/types/chat';
 
+const isProduction = process.env.NODE_ENV === 'production';
+const warnIfDebug = (...args: unknown[]) => {
+  if (!isProduction) {
+    console.warn(...args);
+  }
+};
+
 /**
  * Citation validation module for real-time validation during streaming
  */
@@ -30,13 +37,13 @@ export function isValidCitation(citation: string): boolean {
 
   // Validate text is not empty
   if (!text || text.trim().length === 0) {
-    console.warn('Citation validation failed: empty text');
+    warnIfDebug('Citation validation failed: empty text');
     return false;
   }
 
   // Validate ID format
   if (!isValidCitationId(id)) {
-    console.warn(`Citation validation failed: invalid ID format "${id}"`);
+    warnIfDebug(`Citation validation failed: invalid ID format "${id}"`);
     return false;
   }
 
@@ -80,7 +87,7 @@ export function validateAllCitations(
     if (idMapping) {
       const needsMapping = /^(P|B|BR|PG)\d+$/.test(id);
       if (needsMapping && !idMapping.reverse[id]) {
-        console.warn(`Citation ID "${id}" not found in mapping`);
+        warnIfDebug(`Citation ID "${id}" not found in mapping`);
         // Don't treat as error - ID might be valid but not in current context
       }
     }
@@ -108,7 +115,7 @@ export function validateAndCleanCitations(
   }
 
   if (logErrors) {
-    console.warn('Citation validation errors:', validation.errors);
+    warnIfDebug('Citation validation errors:', validation.errors);
   }
 
   // Remove invalid citations
@@ -117,7 +124,7 @@ export function validateAndCleanCitations(
     const match = error.match(/in: (\[.*?\]\{.*?\})/);
     if (match) {
       const invalidCitation = match[1];
-      cleanedText = cleanedText.replace(invalidCitation, '');
+      cleanedText = cleanedText.replace(invalidCitation, ' [citation missing]');
     }
   });
 

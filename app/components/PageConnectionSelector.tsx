@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
+import { Id, Doc } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -33,7 +33,7 @@ export function PageConnectionSelector({
   const dynamicFiles = useQuery(api.dynamicFiles.list, { resumeId });
   const connectPage = useMutation(api.projects.connectPage);
   
-  const connectedPage = dynamicFiles?.find(file => file._id === connectedPageId);
+  const connectedPage = dynamicFiles?.find((file: Doc<"dynamicFiles">) => file._id === connectedPageId);
   
   const handleConnect = async (pageId: Id<"dynamicFiles"> | null) => {
     setIsConnecting(true);
@@ -90,7 +90,7 @@ export function PageConnectionSelector({
           Connect to Page
         </div>
         
-        {dynamicFiles.map((file) => (
+        {dynamicFiles.map((file: Doc<"dynamicFiles">) => (
           <DropdownMenuItem
             key={file._id}
             onClick={() => handleConnect(file._id)}

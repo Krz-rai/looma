@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '../convex/_generated/api';
-import { Id } from '../convex/_generated/dataModel';
+import { Id, Doc } from '../convex/_generated/dataModel';
 
 interface DataFetcherProps {
   projects: {
@@ -105,7 +105,7 @@ export function ProjectDataFetcher({
   
   return (
     <>
-      {bulletPoints && onBranchesLoad && bulletPoints.map((bp) => (
+      {bulletPoints && onBranchesLoad && bulletPoints.map((bp: Doc<"bulletPoints">) => (
         <BranchFetcher
           key={bp._id}
           bulletPointId={bp._id}

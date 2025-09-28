@@ -5,7 +5,7 @@ import Link from "next/link";
 // import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
+import { Id, Doc } from "../../convex/_generated/dataModel";
 import { Authenticated, Unauthenticated } from "convex/react";
 import { SignInButton } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
@@ -134,7 +134,7 @@ function ResumesList() {
         </div>
       ) : (
         <div className="space-y-2">
-          {resumes.map((resume) => (
+          {resumes.map((resume: Doc<"resumes">) => (
             <div
               key={resume._id}
               className="group relative border border-border/50 rounded-lg p-4 hover:bg-muted/30 transition-all cursor-pointer"

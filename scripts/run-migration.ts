@@ -12,6 +12,16 @@
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../convex/_generated/api";
 
+type BackfillEmbeddingsResult = {
+  processedBullets: number;
+  processedProjects: number;
+  processedBranches: number;
+  processedPages: number;
+  processedAudioSummaries: number;
+  totalProcessed: number;
+  errors: string[];
+};
+
 // Get Convex URL from environment
 const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL;
 if (!CONVEX_URL) {
@@ -60,10 +70,13 @@ async function runMigration() {
   try {
     console.log('🔄 Running backfill...');
     
-    const result = await client.action(api.migrations.runBackfillEmbeddings, {
-      dryRun,
-      ...(batchSize && { batchSize }),
-    });
+    const result = await client.action(
+      (api as any).migrations.runBackfillEmbeddings,
+      {
+        dryRun,
+        ...(batchSize ? { batchSize } : {}),
+      }
+    ) as BackfillEmbeddingsResult;
 
     console.log('\n📊 Migration Results:');
     console.log(`✅ Total processed: ${result.totalProcessed}`);

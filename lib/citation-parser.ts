@@ -1,13 +1,17 @@
 import { Citation, IdMapping } from "@/types/chat";
 import { ReactElement } from "react";
 
+const isProduction = process.env.NODE_ENV === 'production';
+const warnIfDebug = (...args: unknown[]) => {
+  if (!isProduction) {
+    console.warn(...args);
+  }
+};
+
 export function parseCitations(
   content: string,
   idMapping?: IdMapping
 ): { text: string; citations: Citation[] } {
-  console.log('🔍 parseCitations called with content length:', content.length);
-  console.log('🔍 idMapping provided:', !!idMapping, idMapping ? Object.keys(idMapping) : 'none');
-
   const citations: Citation[] = [];
   let processedText = content;
 
@@ -22,17 +26,14 @@ export function parseCitations(
   while ((match = citationRegex.exec(content)) !== null) {
     const [fullMatch, text, id] = match;
 
-    console.log('📌 Found citation:', { text, id, fullMatch });
-
     // Skip tool indicators like [web_search]
     if (!id || text === 'web_search' || (text.includes('_') && !text.includes(':') && !text.toLowerCase().includes('echo'))) {
-      console.log('⏭️ Skipping tool indicator:', fullMatch);
       continue;
     }
 
     // Validate ID format
     if (!isValidCitationId(id)) {
-      console.warn('⚠️ Invalid citation ID format:', id);
+      warnIfDebug('⚠️ Invalid citation ID format:', id);
       continue;
     }
 
@@ -43,7 +44,6 @@ export function parseCitations(
     const citation = createCitation(type, text, id, idMapping);
 
     if (citation) {
-      console.log('✅ Adding citation:', citation);
       citations.push(citation);
 
       // Replace citation with a marker for rendering
@@ -52,12 +52,6 @@ export function parseCitations(
       citationIndex++;
     }
   }
-
-  console.log('🏁 parseCitations result:', {
-    citationsCount: citations.length,
-    citations,
-    processedTextLength: processedText.length
-  });
 
   return { text: processedText, citations };
 }
@@ -123,13 +117,10 @@ function createCitation(
 
   // Handle echo citations
   if (type === 'echo') {
-    console.log('🎵 Processing echo citation');
-
     // Extract point number from text (e.g., "Echo P1")
     const pointMatch = text.match(/P(\d+)/);
     if (pointMatch) {
       timestamp = parseInt(pointMatch[1]); // Store point number in timestamp field
-      console.log('🎵 Extracted point number:', timestamp);
     }
 
     // Map page ID to Convex ID
@@ -149,11 +140,8 @@ function createCitation(
 
   // Handle audio citations
   if (type === 'audio') {
-    console.log('🎵 Processing audio citation');
-
     // Format: PG#:filename
     const [pageId, fileName] = id.split(':');
-    console.log('🎵 Split audio ID:', { pageId, fileName });
 
     // Map page ID to Convex ID
     if (idMapping && idMapping.reverse[pageId]) {
@@ -166,7 +154,6 @@ function createCitation(
     const timestampMatch = text.match(/T(\d+)s/);
     if (timestampMatch) {
       timestamp = parseInt(timestampMatch[1]);
-      console.log('🎵 Found timestamp:', timestamp);
     }
 
     return {

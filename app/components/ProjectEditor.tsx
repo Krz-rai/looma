@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
+import { Id, Doc } from "../../convex/_generated/dataModel";
 import { BulletPointEditor } from "./BulletPointEditor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -112,7 +112,7 @@ export function ProjectEditor({
   
   const updateProject = useMutation(api.projects.update);
   const deleteProject = useMutation(api.projects.remove);
-  const createBulletWithEmbeddings = useAction((api as any).embedActions.createBulletWithEmbeddings);
+  const createBulletWithEmbeddings = useAction(api.embedActions.createBulletWithEmbeddings);
   const reorderBulletPoint = useMutation(api.bulletPoints.reorder);
   
   const bulletPoints = useQuery(api.bulletPoints.list, { 
@@ -171,19 +171,19 @@ export function ProjectEditor({
 
     if (!over || active.id === over.id || !bulletPoints) return;
 
-    const oldIndex = bulletPoints.findIndex((bp) => bp._id === active.id);
-    const newIndex = bulletPoints.findIndex((bp) => bp._id === over.id);
+    const oldIndex = bulletPoints.findIndex((bp: Doc<"bulletPoints">) => bp._id === active.id);
+    const newIndex = bulletPoints.findIndex((bp: Doc<"bulletPoints">) => bp._id === over.id);
 
     if (oldIndex !== -1 && newIndex !== -1) {
       // Create new order array for optimistic update
       const newOrder = arrayMove(bulletPoints, oldIndex, newIndex);
-      setOptimisticBulletPoints(newOrder);
+      setOptimisticBulletPoints(newOrder as Doc<"bulletPoints">[]);
       
       // Call reorder with the new order
       try {
         await reorderBulletPoint({ 
           projectId: project._id,
-          bulletPointIds: newOrder.map(bp => bp._id)
+          bulletPointIds: newOrder.map((bp: Doc<"bulletPoints">) => bp._id)
         });
       } finally {
         // Clear optimistic state after server update
@@ -210,7 +210,7 @@ export function ProjectEditor({
   } : {};
 
   const activeBullet = activeBulletId 
-    ? displayBulletPoints?.find(bp => bp._id === activeBulletId) 
+    ? displayBulletPoints?.find((bp) => bp._id === activeBulletId) 
     : null;
 
   return (
@@ -355,7 +355,7 @@ export function ProjectEditor({
                     onDragEnd={handleDragEnd}
                   >
                     <SortableContext
-                      items={displayBulletPoints.map(bp => bp._id)}
+                      items={displayBulletPoints.map((bp) => bp._id)}
                       strategy={verticalListSortingStrategy}
                     >
                       <div className="space-y-3">

@@ -4,15 +4,16 @@ import { action } from "./_generated/server";
 import { v } from "convex/values";
 import { generateEmbeddings, ChunkEmbedding } from "../lib/embedding";
 import { api, internal } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
 
-export const createBulletWithEmbeddings: any = action({
+export const createBulletWithEmbeddings = action({
   args: {
     projectId: v.id("projects"),
     content: v.string(),
     position: v.optional(v.number()),
   },
   returns: v.id("bulletPoints"),
-  handler: async (ctx, args): Promise<any> => {
+  handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("Not authenticated");
@@ -27,7 +28,7 @@ export const createBulletWithEmbeddings: any = action({
 
     const embeddings: Array<ChunkEmbedding> = await generateEmbeddings(args.content);
 
-    const bulletId: any = await ctx.runMutation(internal.bulletPoints.create, {
+    const bulletId: Id<"bulletPoints"> = await ctx.runMutation(internal.bulletPoints.create, {
       projectId: args.projectId,
       content: args.content,
       position: args.position,
@@ -45,7 +46,7 @@ export const createBulletWithEmbeddings: any = action({
   },
 });
 
-export const createProjectWithEmbeddings: any = action({
+export const createProjectWithEmbeddings = action({
   args: {
     resumeId: v.id("resumes"),
     title: v.string(),
@@ -53,7 +54,7 @@ export const createProjectWithEmbeddings: any = action({
     position: v.optional(v.number()),
   },
   returns: v.id("projects"),
-  handler: async (ctx, args): Promise<any> => {
+  handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("Not authenticated");
@@ -75,7 +76,7 @@ export const createProjectWithEmbeddings: any = action({
 
     const embeddings: Array<ChunkEmbedding> = await generateEmbeddings(content);
 
-    const projectId: any = await ctx.runMutation(internal.projects.create, {
+    const projectId: Id<"projects"> = await ctx.runMutation(internal.projects.create, {
       resumeId: args.resumeId,
       title: args.title,
       description: args.description,
@@ -94,7 +95,7 @@ export const createProjectWithEmbeddings: any = action({
   },
 });
 
-export const createBranchWithEmbeddings: any = action({
+export const createBranchWithEmbeddings = action({
   args: {
     bulletPointId: v.id("bulletPoints"),
     content: v.string(),
@@ -102,7 +103,7 @@ export const createBranchWithEmbeddings: any = action({
     position: v.optional(v.number()),
   },
   returns: v.id("branches"),
-  handler: async (ctx, args): Promise<any> => {
+  handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("Not authenticated");
@@ -117,7 +118,7 @@ export const createBranchWithEmbeddings: any = action({
 
     const embeddings: Array<ChunkEmbedding> = await generateEmbeddings(args.content);
 
-    const branchId: any = await ctx.runMutation(internal.branches.create, {
+    const branchId: Id<"branches"> = await ctx.runMutation(internal.branches.create, {
       bulletPointId: args.bulletPointId,
       content: args.content,
       type: args.type,
@@ -136,13 +137,13 @@ export const createBranchWithEmbeddings: any = action({
   },
 });
 
-export const updatePageContentWithEmbeddings: any = action({
+export const updatePageContentWithEmbeddings = action({
   args: {
     fileId: v.id("dynamicFiles"),
     content: v.any(),
   },
   returns: v.object({ success: v.boolean() }),
-  handler: async (ctx, args): Promise<any> => {
+  handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("Not authenticated");
@@ -211,17 +212,30 @@ export const generateAudioSummaryWithEmbeddings: any = action({
       transcriptionId: args.transcriptionId,
     });
 
-    // If summary generation was successful, generate embeddings
+    // If summary generation was successful, generate embeddings for each bullet point
     if (result.success && result.summary) {
-      const summaryText = result.summary.points.map((point: any) => point.text).join('\n\n');
-      
-      if (summaryText.trim().length > 0) {
-        const embeddings: Array<ChunkEmbedding> = await generateEmbeddings(summaryText);
+      const bulletPoints = result.summary.points.map((point: any) => point.text);
+
+      if (bulletPoints.length > 0) {
+        // Generate embeddings for each bullet point individually
+        const allEmbeddings: Array<ChunkEmbedding> = [];
+
+        for (let i = 0; i < bulletPoints.length; i++) {
+          const bulletText = bulletPoints[i];
+          if (bulletText.trim().length > 0) {
+            const bulletEmbeddings = await generateEmbeddings(bulletText);
+            // Update chunk index to reflect bullet point position
+            bulletEmbeddings.forEach((embedding) => {
+              embedding.chunkIndex = i; // Use bullet point index as chunk index
+              allEmbeddings.push(embedding);
+            });
+          }
+        }
 
         // Save embeddings via internal mutation
         await ctx.runMutation(internal.audioTranscription.saveAudioSummaryEmbeddings, {
           transcriptionId: args.transcriptionId,
-          embeddings: embeddings.map((e) => ({
+          embeddings: allEmbeddings.map((e) => ({
             content: e.content,
             chunkIndex: e.chunkIndex,
             hash: e.hash,

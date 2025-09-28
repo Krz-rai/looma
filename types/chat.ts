@@ -1,5 +1,5 @@
 import { UIMessage } from "ai";
-import { Id } from "@/convex/_generated/dataModel";
+import { Id } from "../convex/_generated/dataModel";
 
 export interface Citation {
   type: string;

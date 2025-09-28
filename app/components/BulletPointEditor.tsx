@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
+import { Id, Doc } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
@@ -37,7 +37,7 @@ export function BulletPointEditor({
   
   const updateBulletPoint = useMutation(api.bulletPoints.update);
   const deleteBulletPoint = useMutation(api.bulletPoints.remove);
-  const createBranchWithEmbeddings = useAction((api as any).embedActions.createBranchWithEmbeddings);
+  const createBranchWithEmbeddings = useAction(api.embedActions.createBranchWithEmbeddings);
   const updateBranch = useMutation(api.branches.update);
   const deleteBranch = useMutation(api.branches.remove);
   
@@ -170,7 +170,7 @@ export function BulletPointEditor({
           {/* Branches - styled to look like actual branches */}
           {branches && branches.length > 0 && (
             <div className="ml-5 space-y-2">
-              {branches.map((branch, index) => (
+              {branches.map((branch: Doc<"branches">, index: number) => (
                 <div key={branch._id} className="relative">
                   {/* Branch connector line */}
                   <div className="absolute -left-4 top-3 w-3 h-px bg-border" />

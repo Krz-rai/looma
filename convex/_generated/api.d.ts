@@ -13,7 +13,6 @@ import type {
   FilterApi,
   FunctionReference,
 } from "convex/server";
-import type * as ai from "../ai.js";
 import type * as audioTranscription from "../audioTranscription.js";
 import type * as branches from "../branches.js";
 import type * as bulletPoints from "../bulletPoints.js";
@@ -33,6 +32,7 @@ import type * as projects from "../projects.js";
 import type * as resumes from "../resumes.js";
 import type * as seed from "../seed.js";
 import type * as semanticSearch from "../semanticSearch.js";
+import type * as semanticSearchTest from "../semanticSearchTest.js";
 import type * as webSearch from "../webSearch.js";
 
 /**
@@ -44,7 +44,6 @@ import type * as webSearch from "../webSearch.js";
  * ```
  */
 declare const fullApi: ApiFromModules<{
-  ai: typeof ai;
   audioTranscription: typeof audioTranscription;
   branches: typeof branches;
   bulletPoints: typeof bulletPoints;
@@ -64,6 +63,7 @@ declare const fullApi: ApiFromModules<{
   resumes: typeof resumes;
   seed: typeof seed;
   semanticSearch: typeof semanticSearch;
+  semanticSearchTest: typeof semanticSearchTest;
   webSearch: typeof webSearch;
 }>;
 export declare const api: FilterApi<

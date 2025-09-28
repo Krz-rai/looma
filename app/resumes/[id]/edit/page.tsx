@@ -7,7 +7,7 @@ import { SignInButton } from "@clerk/nextjs";
 import { ResumeBuilder } from "../../../components/ResumeBuilder";
 import { FileSidebar } from "../../../components/FileSidebar";
 import { DynamicFileViewer } from "../../../components/DynamicFileViewer";
-import { Id } from "../../../../convex/_generated/dataModel";
+import { Id, Doc } from "../../../../convex/_generated/dataModel";
 import { api } from "../../../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { 
@@ -34,6 +34,8 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { SidebarProvider, Sidebar, SidebarInset, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
+import { SidebarOpen } from "lucide-react";
 
 export default function EditResumePage() {
   const params = useParams();
@@ -82,127 +84,131 @@ export default function EditResumePage() {
 
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar 
-        breadcrumbs={[
-          { label: "My Resumes", href: "/resumes" },
-          { label: resume?.title || "Edit Resume" }
-        ]}
-        actions={
-          <>
-            {/* Save status */}
-            {lastSaved && (
-              <div className="flex items-center gap-1.5 px-2 text-xs text-muted-foreground">
-                <Clock className="h-3 w-3" />
-                <span>Saved {lastSaved.toLocaleTimeString()}</span>
-              </div>
-            )}
-            
-            {/* Save button */}
-            <Button 
-              variant="ghost" 
-              size="sm"
-              onClick={handleSave}
-              className={cn(
-                "h-8 px-3 gap-1.5 transition-all duration-200",
-                saved 
-                  ? "bg-green-500/10 text-green-600 hover:bg-green-500/20" 
-                  : "hover:bg-muted/60 text-muted-foreground hover:text-foreground"
+    <SidebarProvider defaultOpen={false}>
+      <div className="h-screen w-screen bg-background overflow-hidden flex flex-col">
+        <Navbar 
+          className="no-print"
+          breadcrumbs={[
+            { label: "My Resumes", href: "/resumes" },
+            { label: resume?.title || "Edit Resume" }
+          ]}
+          actions={
+            <>
+              {/* Save status */}
+              {lastSaved && (
+                <div className="flex items-center gap-1.5 px-2 text-xs text-muted-foreground">
+                  <Clock className="h-3 w-3" />
+                  <span>Saved {lastSaved.toLocaleTimeString()}</span>
+                </div>
               )}
-            >
-              {saved ? (
-                <>
-                  <Check className="h-3.5 w-3.5" />
-                  <span className="text-sm">Saved</span>
-                </>
-              ) : (
-                <>
-                  <Save className="h-3.5 w-3.5" />
-                  <span className="text-sm">Save</span>
-                </>
-              )}
-            </Button>
-
-            {/* Preview button */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => router.push(`/resumes/${resumeId}`)}
-              className="h-8 px-3 gap-1.5 hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Eye className="h-3.5 w-3.5" />
-              <span className="text-sm">Preview</span>
-            </Button>
-
-            {/* Settings dropdown */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  className="h-8 px-2 hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <Settings className="h-3.5 w-3.5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                {/* Export as PDF */}
-                {resume && projects && (
-                  <PDFExportButton 
-                    resume={resume} 
-                    projects={projects} 
-                    bulletPointsByProject={bulletPointsByProject}
-                  />
+              
+              {/* Save button */}
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={handleSave}
+                className={cn(
+                  "h-8 px-3 gap-1.5 transition-all duration-200",
+                  saved 
+                    ? "bg-green-500/10 text-green-600 hover:bg-green-500/20" 
+                    : "hover:bg-muted/60 text-muted-foreground hover:text-foreground"
                 )}
-                
-                <DropdownMenuSeparator />
-                
-                <DropdownMenuItem className="cursor-pointer text-destructive">
-                  <Trash2 className="mr-2 h-3.5 w-3.5" />
-                  <span className="text-sm">Delete Resume</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </>
-        }
-      />
-      
-      <main className="pt-12 h-[calc(100vh-3rem)]">
-        <Authenticated>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* Left Sidebar - 25% */}
-            <ResizablePanel defaultSize={25} minSize={20} maxSize={35}>
-              <FileSidebar
-                resumeId={resumeId}
-                dynamicFiles={dynamicFiles || []}
-                selectedFileId={selectedFileId}
-                onSelectFile={setSelectedFileId}
-                isEditable={true}
-              />
-            </ResizablePanel>
-            
-            <ResizableHandle withHandle />
-            
-            {/* Main Content - 75% */}
-            <ResizablePanel defaultSize={75}>
-              <div className="h-full overflow-y-auto p-8">
-                {/* Data fetcher for PDF export */}
-                {projects && projects.map(project => (
-                  <ProjectDataFetcher
-                    key={project._id}
-                    project={project}
-                    onBulletPointsLoad={handleBulletPointsLoad}
-                  />
-                ))}
-                
-                {selectedFileId ? (
-                  <DynamicFileViewer fileId={selectedFileId} />
+              >
+                {saved ? (
+                  <>
+                    <Check className="h-3.5 w-3.5" />
+                    <span className="text-sm">Saved</span>
+                  </>
                 ) : (
-                  <ResumeBuilder resumeId={resumeId} />
+                  <>
+                    <Save className="h-3.5 w-3.5" />
+                    <span className="text-sm">Save</span>
+                  </>
                 )}
+              </Button>
+
+              {/* Preview button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => router.push(`/resumes/${resumeId}`)}
+                className="h-8 px-3 gap-1.5 hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                <span className="text-sm">Preview</span>
+              </Button>
+
+              {/* Settings dropdown */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-8 px-2 hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  {/* Export as PDF */}
+                  {resume && projects && (
+                    <PDFExportButton 
+                      resume={resume} 
+                      projects={projects} 
+                      bulletPointsByProject={bulletPointsByProject}
+                    />
+                  )}
+                  
+                  <DropdownMenuSeparator />
+                  
+                  <DropdownMenuItem className="cursor-pointer text-destructive">
+                    <Trash2 className="mr-2 h-3.5 w-3.5" />
+                    <span className="text-sm">Delete Resume</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          }
+        />
+      
+      {/* Sidebar + Content */}
+      <Sidebar side="left" variant="floating" collapsible="offcanvas" className="top-12 h-[calc(100vh-3rem)]">
+        <FileSidebar
+          resumeId={resumeId}
+          dynamicFiles={dynamicFiles || []}
+          selectedFileId={selectedFileId}
+          onSelectFile={setSelectedFileId}
+          isEditable={true}
+        />
+      </Sidebar>
+
+      <SidebarInset className="pt-12 h-[calc(100vh-3rem)] min-h-0">
+        <Authenticated>
+          <SidebarClickToCollapse className="h-full min-h-0 flex relative overflow-hidden">
+            <SidebarFloatingToggle />
+            
+            {/* Main Content - Always Centered */}
+            <div className="flex-1 h-full overflow-y-auto">
+              <div className="min-h-full flex justify-center">
+                <div className="w-full max-w-3xl px-6 py-8">
+                  {/* Data fetcher for PDF export */}
+                  {projects && projects.map((project: Doc<"projects">) => (
+                    <ProjectDataFetcher
+                      key={project._id}
+                      project={project}
+                      onBulletPointsLoad={handleBulletPointsLoad}
+                    />
+                  ))}
+                  
+                  {selectedFileId ? (
+                    <DynamicFileViewer fileId={selectedFileId} />
+                  ) : (
+                    <ResumeBuilder resumeId={resumeId} />
+                  )}
+                </div>
               </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
+            </div>
+          </SidebarClickToCollapse>
         </Authenticated>
         <Unauthenticated>
           <div className="max-w-md mx-auto text-center space-y-4">
@@ -212,7 +218,54 @@ export default function EditResumePage() {
             </SignInButton>
           </div>
         </Unauthenticated>
-      </main>
+      </SidebarInset>
+      </div>
+    </SidebarProvider>
+  );
+}
+
+function SidebarFloatingToggle() {
+  const { state, toggleSidebar } = useSidebar();
+  if (state !== "collapsed") return null;
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleSidebar();
+      }}
+      className="absolute left-0 top-1/2 -translate-y-1/2 z-20 flex flex-col items-center gap-1.5 px-2 py-3 bg-background/95 backdrop-blur-sm hover:bg-muted/80 rounded-r-lg border border-l-0 border-border/50 shadow-sm transition-all group"
+      aria-label="Open Files Sidebar"
+    >
+      <span
+        className="text-[10px] font-medium text-muted-foreground group-hover:text-foreground transition-colors leading-none"
+        style={{ writingMode: 'vertical-lr' }}
+      >
+        Files
+      </span>
+      <SidebarOpen className="h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+    </button>
+  );
+}
+
+function SidebarClickToCollapse({ children, className }: { children: React.ReactNode; className?: string }) {
+  const { setOpen, setOpenMobile, openMobile, isMobile, state } = useSidebar();
+  return (
+    <div
+      className={className}
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest('[data-slot="sidebar"]')) return;
+        // Only close if sidebar is expanded
+        if (state === "expanded") {
+          if (isMobile) {
+            if (openMobile) setOpenMobile(false);
+          } else {
+            setOpen(false);
+          }
+        }
+      }}
+    >
+      {children}
     </div>
   );
 }

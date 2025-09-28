@@ -3,6 +3,7 @@ import { mutation, query, action, internalMutation, internalQuery } from "./_gen
 import { api, internal } from "./_generated/api";
 import { experimental_transcribe as transcribe } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
+import { z } from 'zod';
 
 // Generate upload URL for audio files
 export const generateAudioUploadUrl = mutation({
@@ -150,15 +151,32 @@ export const transcribeAudio = action({
   },
 });
 
+// Zod schema for structured bullet point summaries
+const audioSummarySchema = z.object({
+  bulletPoints: z.array(
+    z.object({
+      text: z.string().describe("Concise bullet point capturing key information from the transcription"),
+      segmentReferences: z.array(
+        z.object({
+          segmentIndex: z.number().describe("Index of the source segment"),
+          start: z.number().describe("Start timestamp in seconds"),
+          end: z.number().describe("End timestamp in seconds"),
+          originalText: z.string().describe("Exact text from the segment"),
+        })
+      ).describe("Source segments that support this bullet point"),
+    })
+  ).min(10).max(30).describe("Structured bullet points summarizing the audio transcription"),
+});
+
 // Generate AI summary of transcription with segment references
 export const generateTranscriptionSummary = action({
   args: {
     transcriptionId: v.id("audioTranscriptions"),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<any> => {
     try {
       // Get the transcription with segments
-      const transcription = await ctx.runQuery(api.audioTranscription.getTranscriptionById, {
+      const transcription: any = await ctx.runQuery(api.audioTranscription.getTranscriptionById, {
         id: args.transcriptionId,
       });
 
@@ -166,105 +184,58 @@ export const generateTranscriptionSummary = action({
         throw new Error("Transcription not found or has no segments");
       }
 
-      // Get Cerebras API key
-      const apiKey = process.env.CEREBRAS_API_KEY;
+      // Get OpenAI API key
+      const apiKey: string | undefined = process.env.OPENAI_API_KEY;
       if (!apiKey) {
-        throw new Error("CEREBRAS_API_KEY is not configured");
+        throw new Error("OPENAI_API_KEY is not configured");
       }
 
       // Create prompt for summary generation
-      const segmentsText = transcription.segments.map((seg, idx) =>
+      const segmentsText: string = transcription.segments.map((seg: { start: number; end: number; text: string }, idx: number) =>
         `[Segment ${idx}] (${formatTimestamp(seg.start)} - ${formatTimestamp(seg.end)}): ${seg.text}`
       ).join('\n\n');
 
-      const prompt = `You are creating a structured summary of an audio transcription.
+      const prompt: string = `You are creating a structured summary of an audio transcription.
 The transcription is divided into segments with timestamps.
 
 TRANSCRIPTION:
 ${segmentsText}
 
 TASK:
-Create a comprehensive summary with key points. Each point should:
+Create a comprehensive summary as bullet points (10-30 bullets). Each bullet should:
 1. Preserve ALL important details, nuances, and specific information from the transcription
 2. Use "He" or "She" based on the speaker's voice/context (never use "The speaker")
 3. Maintain the exact meaning and details - do not simplify or generalize
-4. Can be longer if needed to capture all the information (no strict length limit)
-5. Reference the source segments
-
-Return the response in this exact JSON format:
-{
-  "points": [
-    {
-      "text": "Summary point text here",
-      "segmentReferences": [
-        {
-          "segmentIndex": 0,
-          "start": segment_start_time,
-          "end": segment_end_time,
-          "originalText": "exact text from the segment"
-        }
-      ]
-    }
-  ]
-}
+4. Be concise but complete enough to capture the essential information
+5. Reference the source segments that support the point
 
 IMPORTANT:
-- Generate as many points as needed to cover ALL content (no minimum or maximum)
+- Generate between 10-30 bullet points to cover ALL content comprehensively
 - Preserve specific details, numbers, names, examples, and exact phrasing
 - Use "He" or "She" pronouns consistently based on the speaker
-- Do not worry about length - completeness and accuracy are more important than brevity
-- Include the exact verbatim text from the segments referenced
+- Each bullet should be standalone and informative
+- Include segment references for traceability
 - Capture every meaningful statement, opinion, example, or piece of information`;
 
-      // Generate summary using Cerebras
-      const response = await fetch("https://api.cerebras.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-oss-120b",
-          messages: [
-            {
-              role: "system",
-              content: "You are a helpful assistant that creates structured summaries of audio transcriptions. Always respond with valid JSON."
-            },
-            {
-              role: "user",
-              content: prompt
-            }
-          ],
-          temperature: 0.3,
-          max_tokens: 4000,
-        }),
+      // Use generateObject for structured output
+      const { generateObject } = await import("ai");
+
+      // Create OpenAI provider
+      const openai = createOpenAI({
+        apiKey,
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Cerebras API error: ${response.status} - ${errorText}`);
-      }
-
-      const data = await response.json();
-      const text = data.choices[0].message.content;
-
-      // Parse JSON response
-      let summaryData;
-      try {
-        // Extract JSON from response (in case there's extra text)
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          summaryData = JSON.parse(jsonMatch[0]);
-        } else {
-          throw new Error("No JSON found in response");
-        }
-      } catch (parseError) {
-        console.error("Failed to parse summary JSON:", text);
-        throw new Error("Failed to parse AI summary response");
-      }
+      const result: any = await generateObject({
+        model: openai('gpt-4o'),
+        schema: audioSummarySchema,
+        system: "You are a helpful assistant that creates structured bullet point summaries of audio transcriptions.",
+        prompt,
+        temperature: 0.3,
+        maxOutputTokens: 4000,
+      });
 
       // Validate and enhance segment references with actual segment text
-      const enhancedPoints = summaryData.points.map((point: any) => ({
+      const enhancedPoints: any[] = result.object.bulletPoints.map((point: any) => ({
         text: point.text,
         segmentReferences: point.segmentReferences.map((ref: any) => {
           const segment = transcription.segments![ref.segmentIndex];
@@ -550,6 +521,121 @@ export const getTranscriptionAndResume = internalQuery({
       resumeId: file.resumeId,
       resumeUserId: resume.userId,
     };
+  },
+});
+
+// Re-generate summaries and embeddings for existing transcriptions using new bullet point format
+export const regenerateTranscriptionSummary = action({
+  args: {
+    transcriptionId: v.id("audioTranscriptions"),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    // Verify ownership
+    const { resumeUserId } = await ctx.runQuery(internal.audioTranscription.getTranscriptionAndResume, {
+      transcriptionId: args.transcriptionId,
+    });
+    if (resumeUserId !== identity.subject) {
+      throw new Error("Not authorized");
+    }
+
+    try {
+      // Generate new bullet point summary
+      const summaryResult = await ctx.runAction(api.audioTranscription.generateTranscriptionSummary, {
+        transcriptionId: args.transcriptionId,
+      });
+
+      if (summaryResult.success) {
+        // Generate new embeddings with bullet point approach
+        await ctx.runAction("embedActions:generateAudioSummaryWithEmbeddings" as any, {
+          transcriptionId: args.transcriptionId,
+        });
+      }
+
+      return summaryResult;
+    } catch (error: any) {
+      console.error("Failed to regenerate transcription summary:", error);
+      return {
+        success: false,
+        error: error.message || "Failed to regenerate summary",
+      };
+    }
+  },
+});
+
+// Batch regenerate all transcription summaries and embeddings for a resume
+export const regenerateAllTranscriptionSummaries = action({
+  args: {
+    resumeId: v.id("resumes"),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    try {
+      // Get all transcriptions for this resume
+      const transcriptions = await ctx.runQuery(api.audioTranscription.getTranscriptionsByResume, {
+        resumeId: args.resumeId,
+      });
+
+      const results = [];
+
+      for (const transcription of transcriptions) {
+        if (transcription.status === "completed" && transcription.segments && transcription.segments.length > 0) {
+          try {
+            console.log(`Regenerating summary for transcription ${transcription._id}`);
+
+            // Generate new bullet point summary
+            const summaryResult = await ctx.runAction(api.audioTranscription.generateTranscriptionSummary, {
+              transcriptionId: transcription._id,
+            });
+
+            if (summaryResult.success) {
+              // Generate new embeddings with bullet point approach
+              await ctx.runAction("embedActions:generateAudioSummaryWithEmbeddings" as any, {
+                transcriptionId: transcription._id,
+              });
+
+              results.push({
+                transcriptionId: transcription._id,
+                success: true,
+              });
+            } else {
+              results.push({
+                transcriptionId: transcription._id,
+                success: false,
+                error: summaryResult.error,
+              });
+            }
+          } catch (error: any) {
+            console.error(`Failed to regenerate summary for ${transcription._id}:`, error);
+            results.push({
+              transcriptionId: transcription._id,
+              success: false,
+              error: error.message,
+            });
+          }
+        }
+      }
+
+      return {
+        success: true,
+        processedCount: results.length,
+        results,
+      };
+    } catch (error: any) {
+      console.error("Failed to batch regenerate transcription summaries:", error);
+      return {
+        success: false,
+        error: error.message || "Failed to batch regenerate summaries",
+      };
+    }
   },
 });
 

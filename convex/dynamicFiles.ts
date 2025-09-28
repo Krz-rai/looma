@@ -205,6 +205,19 @@ export const create = mutation({
     templateId: v.optional(v.id("fileTemplates")),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    // Ensure the caller owns the resume
+    const resume = await ctx.db.get(args.resumeId);
+    if (!resume) {
+      throw new Error("Resume not found");
+    }
+    if (resume.userId !== identity.subject) {
+      throw new Error("Not authorized");
+    }
     const existingFiles = await ctx.db
       .query("dynamicFiles")
       .withIndex("by_resume", (q) => q.eq("resumeId", args.resumeId))
@@ -249,6 +262,24 @@ export const update = mutation({
     isPublic: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    // Verify ownership via the file -> resume
+    const file = await ctx.db.get(args.id);
+    if (!file) {
+      throw new Error("File not found");
+    }
+    const resume = await ctx.db.get(file.resumeId);
+    if (!resume) {
+      throw new Error("Resume not found");
+    }
+    if (resume.userId !== identity.subject) {
+      throw new Error("Not authorized");
+    }
+
     const { id, ...updates } = args;
     await ctx.db.patch(id, {
       ...updates,
@@ -260,6 +291,24 @@ export const update = mutation({
 export const remove = mutation({
   args: { id: v.id("dynamicFiles") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    // Verify ownership via the file -> resume
+    const file = await ctx.db.get(args.id);
+    if (!file) {
+      throw new Error("File not found");
+    }
+    const resume = await ctx.db.get(file.resumeId);
+    if (!resume) {
+      throw new Error("Resume not found");
+    }
+    if (resume.userId !== identity.subject) {
+      throw new Error("Not authorized");
+    }
+
     // Delete the file content
     const content = await ctx.db
       .query("dynamicFileContent")

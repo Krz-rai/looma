@@ -1,11 +1,24 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuAction,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from "@/components/ui/sidebar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,7 +36,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
 import {
   FileText,
   Plus,
@@ -67,13 +79,14 @@ interface FileSidebarProps {
   isEditable?: boolean;
 }
 
-export function FileSidebar({ 
-  resumeId, 
-  dynamicFiles, 
-  selectedFileId, 
+export function FileSidebar({
+  resumeId,
+  dynamicFiles,
+  selectedFileId,
   onSelectFile,
-  isEditable = false 
+  isEditable = false,
 }: FileSidebarProps) {
+  const { setOpenMobile } = useSidebar();
   const [showNewFileDialog, setShowNewFileDialog] = useState(false);
   const [newFileTitle, setNewFileTitle] = useState("");
   const [newFileIcon, setNewFileIcon] = useState("FileText");
@@ -84,6 +97,15 @@ export function FileSidebar({
   const createFile = useMutation(api.dynamicFiles.create);
   const updateFile = useMutation(api.dynamicFiles.update);
   const deleteFile = useMutation(api.dynamicFiles.remove);
+
+  const sortedFiles = useMemo(() => {
+    return [...(dynamicFiles || [])].sort((a, b) => a.position - b.position);
+  }, [dynamicFiles]);
+
+  const handleSelect = (fileId: Id<"dynamicFiles"> | null) => {
+    onSelectFile(fileId);
+    setOpenMobile(false);
+  };
 
   const handleCreateFile = async () => {
     if (newFileTitle.trim()) {
@@ -96,7 +118,7 @@ export function FileSidebar({
       setNewFileTitle("");
       setNewFileIcon("FileText");
       setShowNewFileDialog(false);
-      onSelectFile(fileId);
+      handleSelect(fileId);
     }
   };
 
@@ -115,152 +137,144 @@ export function FileSidebar({
     if (confirm("Are you sure you want to delete this page?")) {
       await deleteFile({ id: fileId });
       if (selectedFileId === fileId) {
-        onSelectFile(null);
+        handleSelect(null);
       }
     }
   };
 
-  const handleTogglePublic = async (fileId: Id<"dynamicFiles">, currentIsPublic: boolean) => {
+  const handleTogglePublic = async (
+    fileId: Id<"dynamicFiles">,
+    currentIsPublic: boolean
+  ) => {
     await updateFile({
       id: fileId,
       isPublic: !currentIsPublic,
     });
   };
 
-  const sortedFiles = [...(dynamicFiles || [])].sort((a, b) => a.position - b.position);
-
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
-        <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Pages</h3>
-        {isEditable && (
+    <>
+      {isEditable && (
+        <SidebarHeader className="px-3 py-3">
           <Button
             onClick={() => setShowNewFileDialog(true)}
-            size="sm"
-            variant="ghost"
-            className="h-7 w-7 p-0"
+            variant="outline"
+            className="w-full h-8 rounded-lg border-border/60 text-muted-foreground hover:text-foreground gap-2"
           >
             <Plus className="h-4 w-4" />
+            <span className="text-sm">New Page</span>
           </Button>
-        )}
-      </div>
-      
-      {/* File List */}
-      <ScrollArea className="flex-1">
-        <div className="p-2 space-y-1">
-          {/* Resume Option */}
-          <div
-            className={cn(
-              "group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors",
-              selectedFileId === null
-                ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100"
-                : "hover:bg-neutral-50 dark:hover:bg-neutral-900 text-neutral-700 dark:text-neutral-300"
-            )}
-            onClick={() => onSelectFile(null)}
-          >
-            <FileUser className="h-4 w-4 shrink-0" />
-            <span className="text-sm font-medium">Resume</span>
-          </div>
-          
-          {/* Separator if there are files */}
-          {sortedFiles.length > 0 && (
-            <div className="my-2 border-b border-neutral-200/50 dark:border-neutral-800/50" />
-          )}
-          
-          {sortedFiles.map((file) => {
-            const Icon = file.icon ? (iconMap[file.icon] || FileText) : FileText;
-            const isSelected = selectedFileId === file._id;
-            
-            return (
-              <div
-                key={file._id}
-                className={cn(
-                  "group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors",
-                  isSelected
-                    ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100"
-                    : "hover:bg-neutral-50 dark:hover:bg-neutral-900 text-neutral-700 dark:text-neutral-300"
-                )}
-              >
-                {/* File button content */}
-                <div 
-                  className="flex items-center gap-2 flex-1 min-w-0"
-                  onClick={() => onSelectFile(file._id)}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  <span className="text-sm truncate flex-1">{file.title}</span>
-                  {file.isPublic ? (
-                    <Globe className="h-3 w-3 shrink-0 opacity-60" />
-                  ) : (
-                    <Lock className="h-3 w-3 shrink-0 opacity-60" />
-                  )}
-                </div>
-                
-                {/* Menu */}
-                {isEditable && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 shrink-0"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <MoreVertical className="h-3.5 w-3.5" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-40 bg-white dark:bg-neutral-950 border-neutral-200 dark:border-neutral-800">
-                      <DropdownMenuItem
-                        onClick={() => {
-                          setEditingFile(file._id);
-                          setEditTitle(file.title);
-                          setEditIcon(file.icon || "FileText");
-                        }}
-                      >
-                        <Edit2 className="mr-2 h-3.5 w-3.5" />
-                        Edit
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => handleTogglePublic(file._id, file.isPublic)}
-                      >
-                        {file.isPublic ? (
-                          <>
-                            <Lock className="mr-2 h-3.5 w-3.5" />
-                            Make Private
-                          </>
-                        ) : (
-                          <>
-                            <Globe className="mr-2 h-3.5 w-3.5" />
-                            Make Public
-                          </>
-                        )}
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => handleDeleteFile(file._id)}
-                        className="text-destructive focus:text-destructive"
-                      >
-                        <Trash2 className="mr-2 h-3.5 w-3.5" />
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </div>
-            );
-          })}
-          
-          {sortedFiles.length === 0 && (
-            <div className="text-center py-8 text-sm text-neutral-500 dark:text-neutral-400">
-              No additional pages
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+        </SidebarHeader>
+      )}
 
-      {/* New File Dialog */}
+      <SidebarContent className="px-2 py-3">
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip="Resume"
+                  isActive={selectedFileId === null}
+                  onClick={() => handleSelect(null)}
+                  className="text-sm"
+                >
+                  <FileUser className="h-4 w-4" />
+                  <span className="flex-1 truncate">Resume</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {sortedFiles.map((file) => {
+                const Icon = file.icon ? iconMap[file.icon] || FileText : FileText;
+                const isSelected = selectedFileId === file._id;
+
+                return (
+                  <SidebarMenuItem key={file._id}>
+                    <SidebarMenuButton
+                      tooltip={file.title}
+                      isActive={isSelected}
+                      onClick={() => handleSelect(file._id)}
+                      className="text-sm"
+                    >
+                      <Icon className="h-4 w-4" />
+                      <span className="flex-1 truncate">{file.title}</span>
+                      {isEditable && (
+                        file.isPublic ? (
+                          <Globe className="h-3.5 w-3.5 text-emerald-500/80" />
+                        ) : (
+                          <Lock className="h-3.5 w-3.5 opacity-70" />
+                        )
+                      )}
+                    </SidebarMenuButton>
+
+                    {isEditable && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <SidebarMenuAction showOnHover>
+                            <MoreVertical className="h-3.5 w-3.5" />
+                          </SidebarMenuAction>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          align="end"
+                          className="w-44 bg-popover"
+                        >
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setEditingFile(file._id);
+                              setEditTitle(file.title);
+                              setEditIcon(file.icon || "FileText");
+                            }}
+                          >
+                            <Edit2 className="mr-2 h-3.5 w-3.5" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => handleTogglePublic(file._id, file.isPublic)}
+                          >
+                            {file.isPublic ? (
+                              <>
+                                <Lock className="mr-2 h-3.5 w-3.5" />
+                                Make Private
+                              </>
+                            ) : (
+                              <>
+                                <Globe className="mr-2 h-3.5 w-3.5" />
+                                Make Public
+                              </>
+                            )}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => handleDeleteFile(file._id)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-3.5 w-3.5" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </SidebarMenuItem>
+                );
+              })}
+
+              {sortedFiles.length === 0 && (
+                <SidebarMenuItem>
+                  <div className="mt-4 rounded-lg border border-dashed border-border/60 px-3 py-6 text-center text-xs text-muted-foreground">
+                    No additional pages yet
+                  </div>
+                </SidebarMenuItem>
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarFooter className="border-t border-border/40 px-4 py-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+        {isEditable ? "Manage project pages" : "Explore project documentation"}
+      </SidebarFooter>
+
       <Dialog open={showNewFileDialog} onOpenChange={setShowNewFileDialog}>
-        <DialogContent className="bg-white dark:bg-neutral-950 border-neutral-200 dark:border-neutral-800">
+        <DialogContent className="bg-background">
           <DialogHeader>
             <DialogTitle>Create New Page</DialogTitle>
             <DialogDescription>
@@ -303,10 +317,7 @@ export function FileSidebar({
             </div>
           </div>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowNewFileDialog(false)}
-            >
+            <Button variant="outline" onClick={() => setShowNewFileDialog(false)}>
               Cancel
             </Button>
             <Button onClick={handleCreateFile}>Create Page</Button>
@@ -314,14 +325,11 @@ export function FileSidebar({
         </DialogContent>
       </Dialog>
 
-      {/* Edit File Dialog */}
       <Dialog open={!!editingFile} onOpenChange={() => setEditingFile(null)}>
-        <DialogContent className="bg-white dark:bg-neutral-950 border-neutral-200 dark:border-neutral-800">
+        <DialogContent className="bg-background">
           <DialogHeader>
             <DialogTitle>Edit Page</DialogTitle>
-            <DialogDescription>
-              Update the page title and icon.
-            </DialogDescription>
+            <DialogDescription>Update the page title and icon.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -359,10 +367,7 @@ export function FileSidebar({
             </div>
           </div>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setEditingFile(null)}
-            >
+            <Button variant="outline" onClick={() => setEditingFile(null)}>
               Cancel
             </Button>
             <Button
@@ -377,6 +382,6 @@ export function FileSidebar({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

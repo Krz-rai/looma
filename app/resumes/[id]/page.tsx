@@ -6,22 +6,24 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-import { Id } from "../../../convex/_generated/dataModel";
+import { Id, Doc } from "../../../convex/_generated/dataModel";
 import { ExpandableBulletPoint } from "../../components/ExpandableBulletPoint";
 import { ResumeChatV2 } from "../../components/ResumeChatV2";
+// import { FileSidebar } from "../../components/FileSidebar";
 import { FileSidebar } from "../../components/FileSidebar";
 import { DynamicFileViewer } from "../../components/DynamicFileViewer";
 import { Button } from "@/components/ui/button";
-import { 
-  Share2, 
-  Copy, 
-  Check, 
+import {
+  Share2,
+  Copy,
+  Check,
   ExternalLink,
-  MoreHorizontal
+  MoreHorizontal,
+  X,
 } from "lucide-react";
 import { Navbar } from "@/components/navbar";
 import { cn } from "@/lib/utils";
-import { Mail, Phone, MapPin, Globe as GlobeIcon, SidebarOpen, X } from "lucide-react";
+import { Mail, Phone, MapPin, Globe as GlobeIcon, SidebarOpen } from "lucide-react";
 import { LinkedinIcon, GithubIcon } from "@/components/icons";
 import {
   DropdownMenu,
@@ -35,11 +37,11 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { SidebarProvider, Sidebar, SidebarInset, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 
 export default function PublicResumePage() {
   const params = useParams();
   const resumeId = params.id as Id<"resumes">;
-  const [leftSidebarOpen, setLeftSidebarOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [highlightedItem, setHighlightedItem] = useState<{ type: string; id: string } | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -49,6 +51,10 @@ export default function PublicResumePage() {
     fileName: string;
     timestamp: number;
   } | undefined>(undefined);
+  const [pendingEchoHighlight, setPendingEchoHighlight] = useState<{
+    pageId: Id<"dynamicFiles">;
+    pointNumber: number;
+  } | null>(null);
   const [bulletPointsByProject, setBulletPointsByProject] = useState<{ [key: string]: {
     _id: Id<"bulletPoints">;
     projectId: Id<"projects">;
@@ -56,7 +62,7 @@ export default function PublicResumePage() {
     position: number;
     hasBranches: boolean;
   }[] }>({});
-  
+
   const resume = useQuery(api.resumes.get, { id: resumeId });
   const projects = useQuery(api.projects.list, resume ? { resumeId } : "skip");
   const dynamicFiles = useQuery(api.dynamicFiles.listPublic, resume ? { resumeId } : "skip");
@@ -66,22 +72,81 @@ export default function PublicResumePage() {
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      
+
       // Check if clicking on a citation button
       const isCitation = target.closest('[data-citation-type]');
       if (isCitation) return;
-      
+
       // Check if clicking on a highlighted element
       const isHighlightedElement = target.closest('.highlight-element, .highlight-bullet, .highlight-branch');
       if (isHighlightedElement) return;
-      
+
       // Clear highlight for any other click
       setHighlightedItem(null);
     };
-    
+
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (!pendingEchoHighlight) {
+      return;
+    }
+
+    if (selectedFileId !== pendingEchoHighlight.pageId) {
+      return;
+    }
+
+    let cancelled = false;
+    let attempts = 0;
+    let animationFrame: number | null = null;
+    const maxAttempts = 12;
+
+    const clearExistingHighlights = () => {
+      document
+        .querySelectorAll('.highlight-persistent')
+        .forEach((el) => el.classList.remove('highlight-persistent'));
+    };
+
+    const tryHighlight = () => {
+      if (cancelled) {
+        return;
+      }
+
+      const summaryElements = document.querySelectorAll(
+        '[id^="echo-point-"], [id^="audio-summary-point-"]'
+      );
+
+      for (const element of Array.from(summaryElements)) {
+        const match = element.id.match(/(?:echo|audio-summary)-point-.*-(\d+)$/);
+        if (match && parseInt(match[1], 10) === pendingEchoHighlight.pointNumber) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          element.classList.add('highlight-persistent');
+          setPendingEchoHighlight(null);
+          return;
+        }
+      }
+
+      if (attempts < maxAttempts) {
+        attempts += 1;
+        animationFrame = requestAnimationFrame(tryHighlight);
+      }
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      clearExistingHighlights();
+      tryHighlight();
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      if (animationFrame !== null) {
+        cancelAnimationFrame(animationFrame);
+      }
+    };
+  }, [pendingEchoHighlight, selectedFileId]);
 
   const handleCopyLink = () => {
     const url = window.location.href;
@@ -90,7 +155,12 @@ export default function PublicResumePage() {
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleCitationClick = (type: string, id: string, text: string) => {
+  const handleCitationClick = (
+    type: string,
+    id: string,
+    text: string,
+    options?: { echoPointNumber?: number }
+  ) => {
     // Handle GitHub citation clicks
     if (type === 'github' && resume?.github) {
       // Extract username from github field
@@ -111,10 +181,10 @@ export default function PublicResumePage() {
 
     // Handle Portfolio citation clicks
     if (type === 'portfolio' && resume?.portfolio) {
-      const portfolioUrl = resume.portfolio.startsWith('http') 
-        ? resume.portfolio 
+      const portfolioUrl = resume.portfolio.startsWith('http')
+        ? resume.portfolio
         : `https://${resume.portfolio}`;
-      
+
       // Check if id contains a specific page (format: "portfolio:/projects/name")
       if (id && id.startsWith('portfolio:')) {
         const path = id.substring(10); // Remove "portfolio:" prefix
@@ -125,23 +195,17 @@ export default function PublicResumePage() {
       }
       return;
     }
-    
+
     // Handle Audio citation clicks - open page and play audio at timestamp
     if (type === 'audio') {
       // Parse audio data from id format: "audio:<pageConvexId>:<filename>:<timestamp>"
       const [, pageId, fileName, timestampStr] = id.split(':');
       const timestamp = parseInt(timestampStr) || 0;
 
-      console.log('🎵 Audio citation clicked:', {
-        pageId,
-        fileName,
-        timestamp,
-        text
-      });
-
       // Open the page
       setSelectedFileId(pageId as Id<"dynamicFiles">);
       setHighlightedLine(null);
+      setPendingEchoHighlight(null);
 
       // Set the audio play request
       setAudioPlayRequest({ fileName, timestamp });
@@ -158,22 +222,13 @@ export default function PublicResumePage() {
       const lineMatch = text.match(/\bL(\d+)(?:-L\d+)?/);
       const lineNumber = lineMatch ? lineMatch[1] : null;
 
-      console.log('📄 Page citation clicked:', {
-        type,
-        id,
-        text,
-        lineNumber,
-        fullText: JSON.stringify(text),
-        lineMatch
-      });
-
       // Clear any audio play request when switching to a different page
       setAudioPlayRequest(undefined);
 
       // Check if clicking the same page citation that's already highlighted
       const isAlreadyHighlighted = selectedFileId === id && highlightedLine === lineNumber;
 
-      if (isAlreadyHighlighted) {
+      if (!options?.echoPointNumber && isAlreadyHighlighted) {
         // Force re-highlight by clearing and re-setting
         setHighlightedLine(null);
         setTimeout(() => {
@@ -182,7 +237,16 @@ export default function PublicResumePage() {
       } else {
         // Normal highlight for different citation
         setSelectedFileId(id as Id<"dynamicFiles">);
-        setHighlightedLine(lineNumber);
+        if (options?.echoPointNumber) {
+          setHighlightedLine(null);
+          setPendingEchoHighlight({
+            pageId: id as Id<"dynamicFiles">,
+            pointNumber: options.echoPointNumber,
+          });
+        } else {
+          setHighlightedLine(lineNumber);
+          setPendingEchoHighlight(null);
+        }
       }
 
       // Open right panel if not already open
@@ -191,22 +255,22 @@ export default function PublicResumePage() {
       }
       return;
     }
-    
+
     // Check if we need to switch from page view to resume view
     const wasInPageView = selectedFileId !== null;
-    
+
     // Clear page view to show resume content
     if (selectedFileId) {
       setSelectedFileId(null);
       setHighlightedLine(null);
     }
-    
+
     // Open right panel to show resume content and scroll to citation
     if (!rightPanelOpen) {
       setRightPanelOpen(true);
       // Panel will expand via the defaultSize prop change
     }
-    
+
     // If same item is clicked, just scroll to it
     if (highlightedItem?.type === type && highlightedItem?.id === id) {
       setTimeout(() => {
@@ -217,10 +281,11 @@ export default function PublicResumePage() {
       }, 100);
       return;
     }
-    
+
     // Clear previous highlight
     setHighlightedItem(null);
-    
+    setPendingEchoHighlight(null);
+
     // Set new highlight after a brief delay to ensure clean transition
     // Use longer delay if switching from page view to ensure DOM updates
     const delay = wasInPageView ? 300 : 100;
@@ -270,27 +335,30 @@ export default function PublicResumePage() {
   }
 
   return (
-    <div className="h-screen w-screen bg-background overflow-hidden flex flex-col" style={{ maxWidth: '100vw' }}>
-      <Navbar 
-        className="no-print"
-        breadcrumbs={[
-          { label: resume.title }
-        ]}
-        actions={
-          <>
-            {/* Share dropdown */}
+    <SidebarProvider defaultOpen={false} className="overlay-sidebar">
+      <div className="h-screen w-screen bg-background overflow-hidden flex flex-col">
+        <Navbar
+          className="no-print"
+          breadcrumbs={[
+            { label: resume.title }
+          ]}
+          actions={
+            <>
+              {/* Sidebar toggle */}
+              <SidebarTrigger className="h-8 w-8 rounded-lg" />
+              {/* Share dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
+                <Button
+                  variant="ghost"
+                  size="sm"
                   className="h-8 px-2 hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Share2 className="h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem 
+                <DropdownMenuItem
                   onClick={handleCopyLink}
                   className="cursor-pointer"
                 >
@@ -306,7 +374,7 @@ export default function PublicResumePage() {
                     </>
                   )}
                 </DropdownMenuItem>
-                <DropdownMenuItem 
+                <DropdownMenuItem
                   onClick={() => window.open(window.location.href, '_blank')}
                   className="cursor-pointer"
                 >
@@ -319,9 +387,9 @@ export default function PublicResumePage() {
             {/* More options */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
+                <Button
+                  variant="ghost"
+                  size="sm"
                   className="h-8 px-2 hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <MoreHorizontal className="h-3.5 w-3.5" />
@@ -329,9 +397,9 @@ export default function PublicResumePage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
                 {resume && projects && (
-                  <PDFExportButton 
-                    resume={resume} 
-                    projects={projects} 
+                  <PDFExportButton
+                    resume={resume}
+                    projects={projects}
                     bulletPointsByProject={bulletPointsByProject}
                   />
                 )}
@@ -345,74 +413,25 @@ export default function PublicResumePage() {
         }
       />
 
-      <div className="flex-1 relative overflow-hidden pt-12">
-        {/* Main Content Area with AI Chat in Center */}
-        <div className="h-full flex relative overflow-hidden">
-          {/* Left Sidebar Overlay - Always rendered for smooth animations */}
-          {/* Backdrop - darkens everything including navbar (z-30 > navbar's z-20) */}
-          <div
-            className={cn(
-              "fixed inset-0 z-30 transition-opacity duration-300 ease-in-out",
-              leftSidebarOpen
-                ? "bg-black/25 dark:bg-black/50 opacity-100"
-                : "opacity-0 pointer-events-none"
-            )}
-            onClick={() => setLeftSidebarOpen(false)}
-          />
+      {/* Sidebar + Content */}
+      <Sidebar side="left" variant="floating" collapsible="offcanvas" className="top-12 h-[calc(100vh-3rem)]">
+        <FileSidebar
+          resumeId={resumeId}
+          dynamicFiles={dynamicFiles || []}
+          selectedFileId={selectedFileId}
+          onSelectFile={(fileId) => {
+            setSelectedFileId(fileId);
+            setAudioPlayRequest(undefined);
+          }}
+          isEditable={false}
+        />
+      </Sidebar>
 
-          {/* Sidebar - Always in DOM for smooth animation */}
-          <div
-            className={cn(
-              "fixed left-0 top-0 h-full z-40 w-80 transform",
-              leftSidebarOpen
-                ? "translate-x-0"
-                : "-translate-x-full"
-            )}
-            style={{
-              transition: leftSidebarOpen
-                ? 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)' // Smooth ease-out
-                : 'transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)' // Slightly faster close
-            }}
-          >
-            <div className="h-full bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800 shadow-2xl">
-              <Button
-                onClick={() => setLeftSidebarOpen(false)}
-                variant="ghost"
-                size="icon"
-                className="absolute right-2 top-2 z-50 h-8 w-8 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-              <FileSidebar
-                resumeId={resumeId}
-                dynamicFiles={dynamicFiles || []}
-                selectedFileId={selectedFileId}
-                onSelectFile={(fileId) => {
-                  setSelectedFileId(fileId);
-                  setAudioPlayRequest(undefined); // Clear audio request when manually selecting a file
-                  setLeftSidebarOpen(false); // Close sidebar after selection
-                }}
-                isEditable={false}
-              />
-            </div>
-          </div>
-
-          {/* Toggle Button for Left Sidebar */}
-          {!leftSidebarOpen && (
-            <button
-              onClick={() => setLeftSidebarOpen(true)}
-              className="absolute left-0 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center gap-1.5 px-2 py-3 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-900 rounded-r-lg border border-l-0 border-neutral-200 dark:border-neutral-800 shadow-md hover:shadow-lg transition-all duration-200 group"
-            >
-              <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors" style={{ writingMode: 'vertical-lr' }}>Files</span>
-              <SidebarOpen className="h-4 w-4 text-muted-foreground group-hover:text-foreground" />
-            </button>
-          )}
-
+      <SidebarInset className="pt-12 h-[calc(100vh-3rem)] min-h-0">
+        <SidebarClickToCollapse className="h-full min-h-0 flex relative overflow-hidden">
+          <SidebarFloatingToggle />
           {/* Main Content with Resizable Panels */}
-          <ResizablePanelGroup
-            direction="horizontal"
-            className="h-full w-full"
-          >
+          <ResizablePanelGroup direction="horizontal" className="h-full w-full min-h-0">
             {/* Left Panel with Resume Content */}
             <ResizablePanel
               defaultSize={50}
@@ -424,11 +443,11 @@ export default function PublicResumePage() {
               onExpand={() => setRightPanelOpen(true)}
             >
               <div className={cn(
-                "h-full bg-background relative",
+                "h-full min-h-0 bg-background relative flex flex-col overflow-hidden",
                 !rightPanelOpen && "hidden"
               )}>
                 {selectedFileId ? (
-                  <div className="h-full border-r border-border/40 overflow-hidden">
+                  <div className="h-full min-h-0 border-r border-border/40 overflow-hidden">
                     <DynamicFileViewer
                       fileId={selectedFileId}
                       isReadOnly={true}
@@ -459,7 +478,7 @@ export default function PublicResumePage() {
                             </p>
                           )}
                         </div>
-                        
+
                         {/* Contact Information - Compact inline style with icons */}
                         {(resume.email || resume.phone || resume.location) && (
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
@@ -483,13 +502,13 @@ export default function PublicResumePage() {
                             )}
                           </div>
                         )}
-                        
+
                         {/* Links - Clean inline style with icons */}
                         {(resume.linkedIn || resume.github || resume.portfolio) && (
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
                             {resume.linkedIn && (
-                              <a href={resume.linkedIn.startsWith('http') ? resume.linkedIn : `https://linkedin.com/in/${resume.linkedIn}`} 
-                                 target="_blank" 
+                              <a href={resume.linkedIn.startsWith('http') ? resume.linkedIn : `https://linkedin.com/in/${resume.linkedIn}`}
+                                 target="_blank"
                                  rel="noopener noreferrer"
                                  className="flex items-center gap-1.5 hover:text-foreground transition-colors">
                                 <LinkedinIcon className="h-3.5 w-3.5" strokeWidth={1.5} />
@@ -516,7 +535,7 @@ export default function PublicResumePage() {
                             )}
                           </div>
                         )}
-                        
+
                         {/* Education - Compact style */}
                         {(resume.university || resume.degree || resume.major || resume.gpa || resume.graduationDate) && (
                           <div className="py-3 border-y border-border/20">
@@ -540,20 +559,20 @@ export default function PublicResumePage() {
                             </div>
                           </div>
                         )}
-                        
+
                         {/* Professional Summary */}
                         {resume.description && (
                           <p className="text-sm text-muted-foreground leading-relaxed">
                             {resume.description}
                           </p>
                         )}
-                        
+
                         {/* Skills */}
                         {resume.skills && resume.skills.length > 0 && (
                           <div className="space-y-1.5">
                             <div className="text-xs font-medium text-muted-foreground/70">SKILLS</div>
                             <div className="flex flex-wrap gap-1.5">
-                              {resume.skills.map((skill, index) => (
+                              {resume.skills.map((skill: string, index: number) => (
                                 <span
                                   key={index}
                                   className="px-2.5 py-1 bg-muted/50 rounded-md text-xs"
@@ -564,20 +583,21 @@ export default function PublicResumePage() {
                             </div>
                           </div>
                         )}
-                        
+
                         {/* Divider */}
                         <div className="border-b border-border/40" />
                       </div>
 
                       {projects && projects.length > 0 ? (
                         <div className="space-y-8">
-                          {projects.map((project, index) => (
-                            <ProjectView 
-                              key={project._id} 
-                              project={project} 
+                          {projects.map((project: Doc<"projects">, index: number) => (
+                            <ProjectView
+                              key={project._id}
+                              project={project}
                               highlightedItem={highlightedItem}
                               index={index}
                               setBulletPointsByProject={setBulletPointsByProject}
+                              branchesByBulletPoint={branchesByBulletPoint}
                             />
                           ))}
                         </div>
@@ -595,30 +615,29 @@ export default function PublicResumePage() {
             </ResizablePanel>
 
             {/* Always render handle and panel to preserve state */}
-            <ResizableHandle
-              withHandle
-              className={cn(
-                "transition-opacity duration-200",
-                !rightPanelOpen && "opacity-0 pointer-events-none"
-              )}
-            />
+            <ResizableHandle withHandle className={cn(
+              "transition-opacity duration-200",
+              !rightPanelOpen && "opacity-0 pointer-events-none"
+            )} />
 
             {/* Right Panel with AI Chat */}
             <ResizablePanel defaultSize={50} minSize={30}>
-              <div className="h-full bg-background relative border-l border-border/40">
-                <ResumeChatV2
-                  resumeId={resumeId}
-                  className="h-full overflow-hidden"
-                  projects={projects}
-                  bulletPointsByProject={bulletPointsByProject}
-                  dynamicFiles={dynamicFiles}
-                  branchesByBulletPoint={branchesByBulletPoint}
-                  onCitationClick={handleCitationClick}
-                />
+              <div className="h-full min-h-0 bg-background relative border-l border-border/40 overflow-hidden">
+                <div className="h-full overflow-y-auto">
+                  <ResumeChatV2
+                    resumeId={resumeId}
+                    className="min-h-full"
+                    projects={projects}
+                    bulletPointsByProject={bulletPointsByProject}
+                    dynamicFiles={dynamicFiles}
+                    branchesByBulletPoint={branchesByBulletPoint}
+                    onCitationClick={handleCitationClick}
+                  />
+                </div>
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>
-          
+
           {/* Toggle Button for Right Panel when collapsed */}
           {!rightPanelOpen && (
             <button
@@ -629,13 +648,62 @@ export default function PublicResumePage() {
               <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors leading-none" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Resume</span>
             </button>
           )}
-        </div>
+        </SidebarClickToCollapse>
+      </SidebarInset>
       </div>
+    </SidebarProvider>
+  );
+}
+
+function SidebarFloatingToggle() {
+  const { state, toggleSidebar } = useSidebar();
+
+  if (state !== "collapsed") return null;
+
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleSidebar();
+      }}
+      className="absolute left-0 top-1/2 -translate-y-1/2 z-20 flex flex-col items-center gap-1.5 px-2 py-3 bg-background/95 backdrop-blur-sm hover:bg-muted/80 rounded-r-lg border border-l-0 border-border/50 shadow-sm transition-all group"
+      aria-label="Open Files Sidebar"
+    >
+      <span
+        className="text-[10px] font-medium text-muted-foreground group-hover:text-foreground transition-colors leading-none"
+        style={{ writingMode: 'vertical-lr' }}
+      >
+        Files
+      </span>
+      <SidebarOpen className="h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+    </button>
+  );
+}
+
+function SidebarClickToCollapse({ children, className }: { children: React.ReactNode; className?: string }) {
+  const { setOpen, setOpenMobile, openMobile, isMobile, state } = useSidebar();
+  return (
+    <div
+      className={className}
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest('[data-slot="sidebar"]')) return;
+        // Only close if sidebar is expanded
+        if (state === "expanded") {
+          if (isMobile) {
+            if (openMobile) setOpenMobile(false);
+          } else {
+            setOpen(false);
+          }
+        }
+      }}
+    >
+      {children}
     </div>
   );
 }
 
-function ProjectView({ project, highlightedItem, index, setBulletPointsByProject }: {
+function ProjectView({ project, highlightedItem, index, setBulletPointsByProject, branchesByBulletPoint }: {
   project: {
     _id: Id<"projects">;
     resumeId: Id<"resumes">;
@@ -653,11 +721,17 @@ function ProjectView({ project, highlightedItem, index, setBulletPointsByProject
     position: number;
     hasBranches: boolean;
   }[] }>>;
+  branchesByBulletPoint?: { [key: string]: Array<{
+    _id: Id<"branches">;
+    content: string;
+    type: "text" | "audio" | "video";
+    position: number;
+  }> };
 }) {
   const bulletPoints = useQuery(api.bulletPoints.list, {
     projectId: project._id
   });
-  
+
   React.useEffect(() => {
     if (bulletPoints && setBulletPointsByProject) {
       setBulletPointsByProject(prev => {
@@ -672,11 +746,11 @@ function ProjectView({ project, highlightedItem, index, setBulletPointsByProject
       });
     }
   }, [bulletPoints, project._id, setBulletPointsByProject]);
-  
+
   const isHighlighted = highlightedItem?.type === 'project' && highlightedItem?.id === project._id;
 
   return (
-    <div 
+    <div
       id={`project-${project._id}`}
       className={cn(
         "relative transition-all duration-300 ease-out",
@@ -698,11 +772,11 @@ function ProjectView({ project, highlightedItem, index, setBulletPointsByProject
             )}
           </div>
         </div>
-        
+
         {/* Bullet Points */}
         {bulletPoints && bulletPoints.length > 0 && (
           <div className="space-y-1 ml-20">
-            {bulletPoints.map((bulletPoint) => (
+            {bulletPoints.map((bulletPoint: Doc<"bulletPoints">) => (
               <ExpandableBulletPoint
                 key={bulletPoint._id}
                 bulletPoint={bulletPoint}
@@ -711,6 +785,7 @@ function ProjectView({ project, highlightedItem, index, setBulletPointsByProject
                 connectedPageId={project.connectedPageId}
                 projectTitle={project.title}
                 resumeId={project.resumeId}
+                branches={branchesByBulletPoint?.[bulletPoint._id] || []}
               />
             ))}
           </div>
